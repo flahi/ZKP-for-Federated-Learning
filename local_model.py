@@ -4,6 +4,7 @@ import numpy as np
 import time
 import pandas as pd
 import os
+import json
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score
@@ -13,7 +14,7 @@ from sklearn.metrics import confusion_matrix
 from sklearn.impute import SimpleImputer
 from sklearn.preprocessing import StandardScaler
 
-class local:
+class local_mod:
 	def __init__(self, id, port, other_ports):
 		self.id = id
 		self.port = port
@@ -121,7 +122,7 @@ def create_hospitals(num, base_port=5000):
 	ports = [base_port+i+1 for i in range(num)]
 	for i in range(num):
 		other = ports[:i] + ports[i+1:]
-		hospital = local(i+1, ports[i], other)
+		hospital = local_mod(i+1, ports[i], other)
 		hospitals.append(hospital)
 	return hospitals
 
@@ -140,8 +141,9 @@ def categorize_smoking(smoking_status):
 	if smoking_status in ['ever', 'not current', 'former']:
 		return 'past-smoker'
 
-n = 5
-local_hospitals = create_hospitals(n, 6000)
+n = 3
+main_port = 6000
+local_hospitals = create_hospitals(n, main_port)
 time.sleep(0.5)
 
 path = "Sample Data/diabetes_prediction_dataset.csv"
@@ -149,8 +151,10 @@ X, Y = load_data(path)
 
 X, Y = preprocess_data(X, Y)
 
-x_array, y_array = split_data(X, Y, n)
+x_array, y_array = split_data(X, Y, n+1)
 
 x_train, x_test, y_train, y_test = test_train(x_array, y_array, n)
 
 train_local_hospitals(local_hospitals, x_train, x_test, y_train, y_test, n)
+
+
