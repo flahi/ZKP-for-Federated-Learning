@@ -5,6 +5,7 @@ import time
 import pandas as pd
 import os
 import json
+from ZKP import *
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score
@@ -49,6 +50,17 @@ class local_mod:
 		print(classification_report(y_test, y_pred))
 		cm = confusion_matrix(y_test, y_pred)
 		print(f"Confusion Matrix for Hospital {self.id}:\n{cm}")
+	def get_feature_importances(self):
+		feature_importances = self.model.feature_importances_.tolist()
+		feature_importances = [int(i*(10**6)) for i in feature_importances]
+		return feature_importances
+	def generate_proof(self, port):
+		feature_importances = self.get_feature_importances()
+		commitments = []
+		r = randbelow(curve_order)
+		for i in feature_importances:
+			commitments.append(pedersen_commit(i, r, G, H))
+		print(commitments)
 
 def load_data(path):
 	if not os.path.exists(path):
@@ -157,4 +169,4 @@ x_train, x_test, y_train, y_test = test_train(x_array, y_array, n)
 
 train_local_hospitals(local_hospitals, x_train, x_test, y_train, y_test, n)
 
-
+local_hospitals[0].generate_proof(main_port)
