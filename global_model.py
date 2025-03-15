@@ -5,6 +5,7 @@ import time
 import pandas as pd
 import os
 import json
+import copy
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score
@@ -40,7 +41,7 @@ class global_mod:
 		client_socket.close()
 		print(data)
 		if (data["request"]==1):
-			limits = {"request":2, "upper":30000, "lower":50000, "port":self.port}
+			limits = {"request":2, "ranges":self.ranges, "port":self.port}
 			limits_encoded = json.dumps(limits).encode()
 			with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
 				try:
@@ -58,6 +59,12 @@ class global_mod:
 		print(classification_report(y_test, y_pred))
 		cm = confusion_matrix(y_test, y_pred)
 		print(f"Confusion Matrix for hospital:\n{cm}")
+		feature_importances = self.get_feature_importances()
+		self.ranges = [[i-1000, i+1000] for i in feature_importances]
+	def get_feature_importances(self):
+		feature_importances = self.model.feature_importances_.tolist()
+		feature_importances = [int(i*(10**6)) for i in feature_importances]
+		return feature_importances
 
 def load_data(path):
 	if not os.path.exists(path):

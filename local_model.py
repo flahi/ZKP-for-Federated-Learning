@@ -5,6 +5,7 @@ import time
 import pandas as pd
 import os
 import json
+import copy
 from ZKP import *
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import train_test_split
@@ -40,9 +41,8 @@ class local_mod:
 		data_from_client = client_socket.recv(8192).decode()
 		data = json.loads(data_from_client)
 		client_socket.close()
-		print(data)
 		if (data["request"]==2):
-			print(data["upper"], data["lower"])
+			self.range_from_global = data["ranges"]
 	def train(self, x_train, x_test, y_train, y_test):
 		self.model.fit(x_train, y_train)
 		y_pred_proba = self.model.predict_proba(x_test)[:, 1]
@@ -64,18 +64,27 @@ class local_mod:
 		C_list = []
 		for i in feature_importances:
 			commitment = pedersen_commit(i, r, G, H)
-			commitments.append((int(commitment[0]), int(commitment[1])))
-			C_list.append(commitment)
+			commitments.append(commitment)
+			print(type(commitment[0]))
 		print(commitments)
-		transaction = {"c":commitments, "port":self.port, "request": 1}
-		transaction_data = json.dumps(transaction).encode()
+		transaction = {"port":self.port, "request": 1, "commitments":commitments}
+		transaction_serialized = copy.deepcopy(transaction)
+		serialize_ZKP_json(transaction_serialized)
+		print("hi", transaction_serialized)
+		transaction_data = json.dumps(transaction_serialized).encode()
 		with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
 			try:
-				s.connect(('localhost', 6000))
+				s.connect(('localhost', port))
 				s.sendall(transaction_data)
 			except ConnectionRefusedError:
-				print(f"Node {self.node_id} could not connect to Node on port {port}")
+				print(f"Local model {self.id} could not connect to Node on port {port}")
 		time.sleep(3)
+		print(self.range_from_global)
+		proofs = []
+		for i in range(len(feature_importances)):
+			proof = create_proof(feature_importances[i], r, self.range_from_global[i][0], self.range_from_global[i][1], commitments[i], G, H)
+			proofs.append(proof)
+		print(proofs)
 
 def load_data(path):
 	if not os.path.exists(path):
