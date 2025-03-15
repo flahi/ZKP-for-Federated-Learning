@@ -40,6 +40,9 @@ class local_mod:
 		data_from_client = client_socket.recv(8192).decode()
 		data = json.loads(data_from_client)
 		client_socket.close()
+		print(data)
+		if (data["request"]==2):
+			print(data["upper"], data["lower"])
 	def train(self, x_train, x_test, y_train, y_test):
 		self.model.fit(x_train, y_train)
 		y_pred_proba = self.model.predict_proba(x_test)[:, 1]
@@ -58,9 +61,21 @@ class local_mod:
 		feature_importances = self.get_feature_importances()
 		commitments = []
 		r = randbelow(curve_order)
+		C_list = []
 		for i in feature_importances:
-			commitments.append(pedersen_commit(i, r, G, H))
+			commitment = pedersen_commit(i, r, G, H)
+			commitments.append((int(commitment[0]), int(commitment[1])))
+			C_list.append(commitment)
 		print(commitments)
+		transaction = {"c":commitments, "port":self.port, "request": 1}
+		transaction_data = json.dumps(transaction).encode()
+		with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+			try:
+				s.connect(('localhost', 6000))
+				s.sendall(transaction_data)
+			except ConnectionRefusedError:
+				print(f"Node {self.node_id} could not connect to Node on port {port}")
+		time.sleep(3)
 
 def load_data(path):
 	if not os.path.exists(path):

@@ -25,19 +25,29 @@ class global_mod:
 			class_weight = 'balanced',
 			oob_score = True
 		)
+		self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+		self.server_socket.bind(('localhost', self.port))
+		self.server_socket.listen()
 		threading.Thread(target=self.listen_for_data, daemon=True).start()
 	def listen_for_data(self):
-		server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-		server_socket.bind(('localhost', self.port))
-		server_socket.listen()
 		print(f"Global hospital listening on port {self.port}")
 		while True:
-			client_socket, _ = server_socket.accept()
-			threading.Thread(target=self.handle_data, args=(client_socket,), daemon=True).start()
-	def handle_data(self, client_socket):
+			client_socket, _ = self.server_socket.accept()
+			threading.Thread(target=self.handle_data, args=(client_socket, _), daemon=True).start()
+	def handle_data(self, client_socket, client_address):
 		data_from_client = client_socket.recv(8192).decode()
 		data = json.loads(data_from_client)
 		client_socket.close()
+		print(data)
+		if (data["request"]==1):
+			limits = {"request":2, "upper":30000, "lower":50000, "port":self.port}
+			limits_encoded = json.dumps(limits).encode()
+			with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+				try:
+					s.connect(('localhost', data["port"]))
+					s.sendall(limits_encoded)
+				except ConnectionRefusedError:
+					print(f"Node {self.node_id} could not connect to Node on port {port}")
 	def train(self, x_train, x_test, y_train, y_test):
 		self.model.fit(x_train, y_train)
 		y_pred_proba = self.model.predict_proba(x_test)[:, 1]
@@ -139,3 +149,5 @@ x_train, x_test, y_train, y_test = test_train(x_array, y_array, n+1)
 
 print("Training global model...")
 global_model.train(x_train[n], x_test[n], y_train[n], y_test[n])
+
+time.sleep(1000)
