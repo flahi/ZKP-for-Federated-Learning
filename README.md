@@ -6,3 +6,4 @@
 4 -> validity
 5 -> valid model ports
 6 -> multi-party computation
+7 -> partial sum

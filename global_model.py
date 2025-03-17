@@ -31,6 +31,8 @@ class global_mod:
 		self.valid_models = list()
 		self.no_of_local = n
 		self.no_of_local_recieved = 0
+		self.total_r = 0
+		self.total_fi = list()
 		self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 		self.server_socket.bind(('localhost', self.port))
 		self.server_socket.listen()
@@ -61,6 +63,15 @@ class global_mod:
 			if self.no_of_local_recieved==self.no_of_local:
 				time.sleep(2)
 				self.send_valid_ports()
+		elif (data["type"]==7):
+			self.no_of_local_recieved += 1
+			self.total_r += data["partial r"]
+			for i in range(len(self.total_fi)):
+				self.total_fi[i] += data["partial fi"][i]
+			if self.no_of_local_recieved == len(self.valid_models):
+				print(f"Total r: {self.total_r}")
+				print(f"Total fi: {self.total_fi}")
+				self.no_of_local = 0
 		else:
 			print("Random access recieved...")
 	def send_ranges(self, local_port):
@@ -119,6 +130,7 @@ class global_mod:
 		cm = confusion_matrix(y_test, y_pred)
 		print(f"Confusion Matrix for hospital:\n{cm}")
 		feature_importances = self.get_feature_importances()
+		self.total_fi = [0]*len(feature_importances)
 		print(feature_importances)
 		percent = 0.35
 		self.ranges = [[int(np.maximum(0, i-(i*percent))), int(i+(i*percent))] for i in feature_importances]

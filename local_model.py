@@ -18,10 +18,11 @@ from sklearn.impute import SimpleImputer
 from sklearn.preprocessing import StandardScaler
 
 class local_mod:
-	def __init__(self, id, port, other_ports):
+	def __init__(self, id, port, other_ports, global_port):
 		self.id = id
 		self.port = port
 		self.other_ports = other_ports
+		self.global_port = global_port
 		self.blinding_factor = 1
 		self.valid_models = list()
 		self.partial_r = 0
@@ -58,32 +59,16 @@ class local_mod:
 			print(data["validity"])
 		elif (data["type"]==5):
 			print("Recieved valid ports.")
-			self.valid_models = data["valid models"]
-			n = len(data["valid models"])
-			r_list = split_value(self.blinding_factor, n)
-			fi_list = [split_value(i, n) for i in self.get_feature_importances()]
-			for i in range(n):
-				if (data["valid models"][i]!=self.port):
-					MPC_data = {"type":6, "port": self.port, "r":r_list[i], "feature importance":[fi[i] for fi in fi_list]}
-					MPC_data_encoded = json.dumps(MPC_data).encode()
-					with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-						try:
-							s.connect(('localhost', data["valid models"][i]))
-							s.sendall(MPC_data_encoded)
-						except ConnectionRefusedError:
-							print(f"Global model could not connect to Node on port {port}")
-				else:
-					self.partial_r += r_list[i]
-					for j in range(len(self.partial_fi)):
-						self.partial_fi[j] += fi_list[j][i]
+			self.split_and_send_data(data)
 		elif (data["type"]==6):
-			self.partial_no += 1
-			self.partial_r += data["r"]
-			for i in range(len(self.partial_fi)):
-				self.partial_fi[i] += data["feature importance"][i]
+			self.update_partial_sum(data)
 			if self.partial_no == len(self.valid_models):
 				print(f"Partial r for local hospital {self.id}: {self.partial_r}")
 				print(f"Partial feature importances for local hospital {self.id}: {self.partial_fi}")
+				self.send_partial_sum()
+				self.partial_r = 0
+				self.partial_fi = [0]*len(self.get_feature_importances())
+				self.partial_no = 1
 		else:
 			print("Random access recieved.")
 	def train(self, x_train, x_test, y_train, y_test):
@@ -101,7 +86,7 @@ class local_mod:
 		feature_importances = self.model.feature_importances_.tolist()
 		feature_importances = [int(i*(10**6)) for i in feature_importances]
 		return feature_importances
-	def generate_proof(self, port):
+	def generate_proof(self):
 		feature_importances = self.get_feature_importances()
 		self.partial_fi = [0]*len(feature_importances)
 		self.partial_r = 0
@@ -121,11 +106,11 @@ class local_mod:
 		print("Sending commitments...")
 		with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
 			try:
-				s.connect(('localhost', port))
+				s.connect(('localhost', self.global_port))
 				s.sendall(commitment_transaction_data)
 				print("Commitments sent successfully.")
 			except ConnectionRefusedError:
-				print(f"Local model {self.id} could not connect to Node on port {port}")
+				print(f"Local model {self.id} could not connect to Node on port {self.global_port}")
 		time.sleep(2)
 		print(f"\nRanges recieved from global hospitals.")
 		proofs = []
@@ -144,12 +129,45 @@ class local_mod:
 		print("Sending proofs...")
 		with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
 			try:
-				s.connect(('localhost', port))
+				s.connect(('localhost', self.global_port))
 				s.sendall(proof_transaction_data)
 				print("Proofs sent successfully.")
 			except ConnectionRefusedError:
-				print(f"Local model {self.id} could not connect to Node on port {port}")
+				print(f"Local model {self.id} could not connect to Node on port {self.global_port}")
 		time.sleep(2)
+	def split_and_send_data(self, data):
+		self.valid_models = data["valid models"]
+		n = len(data["valid models"])
+		r_list = split_value(self.blinding_factor, n)
+		fi_list = [split_value(i, n) for i in self.get_feature_importances()]
+		for i in range(n):
+			if (data["valid models"][i]!=self.port):
+				MPC_data = {"type":6, "port": self.port, "r":r_list[i], "feature importance":[fi[i] for fi in fi_list]}
+				MPC_data_encoded = json.dumps(MPC_data).encode()
+				with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+					try:
+						s.connect(('localhost', data["valid models"][i]))
+						s.sendall(MPC_data_encoded)
+					except ConnectionRefusedError:
+						print(f"Local model {self.id} could not connect to Node on port {data['valid models'][i]}")
+			else:
+				self.partial_r += r_list[i]
+				for j in range(len(self.partial_fi)):
+					self.partial_fi[j] += fi_list[j][i]
+	def update_partial_sum(self, data):
+		self.partial_no += 1
+		self.partial_r += data["r"]
+		for i in range(len(self.partial_fi)):
+			self.partial_fi[i] += data["feature importance"][i]
+	def send_partial_sum(self):
+		partial_sum = {"type":7, "port":self.port, "partial r": self.partial_r, "partial fi":self.partial_fi}
+		partial_sum_encoded = json.dumps(partial_sum).encode()
+		with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+			try:
+				s.connect(('localhost', self.global_port))
+				s.sendall(partial_sum_encoded)
+			except ConnectionRefusedError:
+				print(f"Local model {self.id} could not connect to Node on port {self.global_port}")
 
 def load_data(path):
 	if not os.path.exists(path):
@@ -223,7 +241,7 @@ def create_hospitals(num, base_port=5000):
 	ports = [base_port+i+1 for i in range(num)]
 	for i in range(num):
 		other = ports[:i] + ports[i+1:]
-		hospital = local_mod(i+1, ports[i], other)
+		hospital = local_mod(i+1, ports[i], other, base_port)
 		hospitals.append(hospital)
 	return hospitals
 
@@ -267,6 +285,6 @@ x_train, x_test, y_train, y_test = test_train(x_array, y_array, n)
 train_local_hospitals(local_hospitals, x_train, x_test, y_train, y_test, n)
 
 for i in local_hospitals:
-	i.generate_proof(main_port)
+	i.generate_proof()
 
 time.sleep(10)
