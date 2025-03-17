@@ -38,11 +38,19 @@ class local_mod:
 			client_socket, _ = server_socket.accept()
 			threading.Thread(target=self.handle_data, args=(client_socket,), daemon=True).start()
 	def handle_data(self, client_socket):
-		data_from_client = client_socket.recv(8192).decode()
+		data_from_client = b""
+		while True:
+			chunk = client_socket.recv(4098)
+			if not chunk:
+				break
+			data_from_client += chunk
+		data = json.loads(data_from_client.decode())
 		data = json.loads(data_from_client)
 		client_socket.close()
-		if (data["request"]==2):
+		if (data["type"]==2):
 			self.range_from_global = data["ranges"]
+		elif (data["type"]==4):
+			print(data["validity"])
 	def train(self, x_train, x_test, y_train, y_test):
 		self.model.fit(x_train, y_train)
 		y_pred_proba = self.model.predict_proba(x_test)[:, 1]
@@ -53,6 +61,7 @@ class local_mod:
 		print(classification_report(y_test, y_pred))
 		cm = confusion_matrix(y_test, y_pred)
 		print(f"Confusion Matrix for Hospital {self.id}:\n{cm}")
+		print(self.get_feature_importances())
 	def get_feature_importances(self):
 		feature_importances = self.model.feature_importances_.tolist()
 		feature_importances = [int(i*(10**6)) for i in feature_importances]
@@ -62,29 +71,47 @@ class local_mod:
 		commitments = []
 		r = randbelow(curve_order)
 		C_list = []
-		for i in feature_importances:
-			commitment = pedersen_commit(i, r, G, H)
+		print(f"\nGenerating commitments for hospital {self.id}...")
+		for i in range(len(feature_importances)):
+			commitment = pedersen_commit(feature_importances[i], r, G, H)
 			commitments.append(commitment)
-			print(type(commitment[0]))
-		print(commitments)
-		transaction = {"port":self.port, "request": 1, "commitments":commitments}
-		transaction_serialized = copy.deepcopy(transaction)
-		serialize_ZKP_json(transaction_serialized)
-		print("hi", transaction_serialized)
-		transaction_data = json.dumps(transaction_serialized).encode()
+		print("Commitments\n", commitments)
+		commitment_transaction = {"port":self.port, "type": 1, "commitments":commitments}
+		commitment_transaction_serialized = copy.deepcopy(commitment_transaction)
+		serialize_ZKP_json(commitment_transaction_serialized)
+		commitment_transaction_data = json.dumps(commitment_transaction_serialized).encode()
+		print("Sending commitments...")
 		with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
 			try:
 				s.connect(('localhost', port))
-				s.sendall(transaction_data)
+				s.sendall(commitment_transaction_data)
+				print("Commitments sent successfully.")
 			except ConnectionRefusedError:
 				print(f"Local model {self.id} could not connect to Node on port {port}")
 		time.sleep(3)
-		print(self.range_from_global)
+		print(f"\nRanges recieved from global hospitals.")
 		proofs = []
+		print(f"\nGenerating proofs for hospital {self.id}...")
 		for i in range(len(feature_importances)):
+			print("\nRange: ",self.range_from_global[i])
+			print("FI: ", feature_importances[i])
 			proof = create_proof(feature_importances[i], r, self.range_from_global[i][0], self.range_from_global[i][1], commitments[i], G, H)
+			print(proof)
 			proofs.append(proof)
-		print(proofs)
+		print("Proofs",proofs)
+		proof_transaction = {"port":self.port, "type": 3, "proofs":proofs}
+		proof_transaction_serialized = copy.deepcopy(proof_transaction)
+		serialize_ZKP_json(proof_transaction_serialized)
+		proof_transaction_data = json.dumps(proof_transaction_serialized).encode()
+		print("Sending proofs...")
+		with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+			try:
+				s.connect(('localhost', port))
+				s.sendall(proof_transaction_data)
+				print("Proofs sent successfully.")
+			except ConnectionRefusedError:
+				print(f"Local model {self.id} could not connect to Node on port {port}")
+		time.sleep(3)
 
 def load_data(path):
 	if not os.path.exists(path):

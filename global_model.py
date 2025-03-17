@@ -6,6 +6,7 @@ import pandas as pd
 import os
 import json
 import copy
+from ZKP import *
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score
@@ -18,7 +19,7 @@ from sklearn.preprocessing import StandardScaler
 class global_mod:
 	def __init__(self, port):
 		self.port = port
-		self.local_ports = []
+		self.local_ports = list()
 		self.model = RandomForestClassifier(
 			random_state = 9,
 			n_estimators = 100,
@@ -26,6 +27,8 @@ class global_mod:
 			class_weight = 'balanced',
 			oob_score = True
 		)
+		self.local_commitments = dict()
+		self.valid_models = list()
 		self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 		self.server_socket.bind(('localhost', self.port))
 		self.server_socket.listen()
@@ -36,19 +39,53 @@ class global_mod:
 			client_socket, _ = self.server_socket.accept()
 			threading.Thread(target=self.handle_data, args=(client_socket, _), daemon=True).start()
 	def handle_data(self, client_socket, client_address):
-		data_from_client = client_socket.recv(8192).decode()
-		data = json.loads(data_from_client)
+		data_from_client = b""
+		while True:
+			chunk = client_socket.recv(4098)
+			if not chunk:
+				break
+			data_from_client += chunk
+		data = json.loads(data_from_client.decode())
+		deserialize_ZKP_json(data)
 		client_socket.close()
 		print(data)
-		if (data["request"]==1):
-			limits = {"request":2, "ranges":self.ranges, "port":self.port}
+		if (data["type"]==1):
+			self.local_commitments[data["port"]] = data["commitments"]
+			limits = {"type":2, "ranges":self.ranges, "port":self.port}
 			limits_encoded = json.dumps(limits).encode()
 			with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
 				try:
 					s.connect(('localhost', data["port"]))
 					s.sendall(limits_encoded)
 				except ConnectionRefusedError:
-					print(f"Node {self.node_id} could not connect to Node on port {port}")
+					print(f"Global model could not connect to Node on port {data['port']}")
+		elif (data["type"]==3):
+			proofs = data["proofs"]
+			check = True
+			for i in range(len(proofs)):
+				if (self.local_commitments[data["port"]][i]==proofs[i]["C"]):
+					print("\nProof: ", proofs[i])
+					if (validate_proof(proofs[i], self.ranges[i][0], self.ranges[i][1])):
+						print("Proof valid.")
+					else:
+						check = False
+						print("ZKP proof invalid.")
+				else:
+					check = False
+					print("proof invalid.")
+			print(f"\nModel validity: {check}")
+			validity = {"type": 4, "validity":check, "port":self.port}
+			validity_encoded = json.dumps(validity).encode()
+			if check:
+				self.valid_models.append(data["port"])
+			with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+				try:
+					s.connect(('localhost', data["port"]))
+					s.sendall(validity_encoded)
+				except ConnectionRefusedError:
+					print(f"Global model could not connect to Node on port {data['port']}")
+		else:
+			print("Random access recieved...")
 	def train(self, x_train, x_test, y_train, y_test):
 		self.model.fit(x_train, y_train)
 		y_pred_proba = self.model.predict_proba(x_test)[:, 1]
@@ -60,7 +97,9 @@ class global_mod:
 		cm = confusion_matrix(y_test, y_pred)
 		print(f"Confusion Matrix for hospital:\n{cm}")
 		feature_importances = self.get_feature_importances()
-		self.ranges = [[i-1000, i+1000] for i in feature_importances]
+		print(feature_importances)
+		percent = 0.3
+		self.ranges = [[int(np.maximum(0, i-(i*percent))), int(i+(i*percent))] for i in feature_importances]
 	def get_feature_importances(self):
 		feature_importances = self.model.feature_importances_.tolist()
 		feature_importances = [int(i*(10**6)) for i in feature_importances]
