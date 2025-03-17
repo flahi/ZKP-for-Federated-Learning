@@ -22,6 +22,11 @@ class local_mod:
 		self.id = id
 		self.port = port
 		self.other_ports = other_ports
+		self.blinding_factor = 1
+		self.valid_models = list()
+		self.partial_r = 0
+		self.partial_fi = list()
+		self.partial_no = 1
 		self.model = RandomForestClassifier(
 			random_state = id,
 			n_estimators = 100,
@@ -46,12 +51,39 @@ class local_mod:
 				break
 			data_from_client += chunk
 		data = json.loads(data_from_client.decode())
-		data = json.loads(data_from_client)
 		client_socket.close()
 		if (data["type"]==2):
 			self.range_from_global = data["ranges"]
 		elif (data["type"]==4):
 			print(data["validity"])
+		elif (data["type"]==5):
+			print("Recieved valid ports.")
+			self.valid_models = data["valid models"]
+			n = len(data["valid models"])
+			r_list = split_value(self.blinding_factor, n)
+			fi_list = [split_value(i, n) for i in self.get_feature_importances()]
+			for i in range(n):
+				if (data["valid models"][i]!=self.port):
+					MPC_data = {"type":6, "port": self.port, "r":r_list[i], "feature importance":[fi[i] for fi in fi_list]}
+					MPC_data_encoded = json.dumps(MPC_data).encode()
+					with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+						try:
+							s.connect(('localhost', data["valid models"][i]))
+							s.sendall(MPC_data_encoded)
+						except ConnectionRefusedError:
+							print(f"Global model could not connect to Node on port {port}")
+				else:
+					self.partial_r += r_list[i]
+					for j in range(len(self.partial_fi)):
+						self.partial_fi[j] += fi_list[j][i]
+		elif (data["type"]==6):
+			self.partial_no += 1
+			self.partial_r += data["r"]
+			for i in range(len(self.partial_fi)):
+				self.partial_fi[i] += data["feature importance"][i]
+			if self.partial_no == len(self.valid_models):
+				print(f"Partial r for local hospital {self.id}: {self.partial_r}")
+				print(f"Partial feature importances for local hospital {self.id}: {self.partial_fi}")
 		else:
 			print("Random access recieved.")
 	def train(self, x_train, x_test, y_train, y_test):
@@ -71,8 +103,11 @@ class local_mod:
 		return feature_importances
 	def generate_proof(self, port):
 		feature_importances = self.get_feature_importances()
+		self.partial_fi = [0]*len(feature_importances)
+		self.partial_r = 0
 		commitments = []
 		r = randbelow(curve_order)
+		self.blinding_factor = r
 		C_list = []
 		print(f"\nGenerating commitments for hospital {self.id}...")
 		for i in range(len(feature_importances)):
@@ -208,10 +243,11 @@ def categorize_smoking(smoking_status):
 		return 'past-smoker'
 
 def split_value(val, n):
-	if n==1:
-		return [val]
-	breakpoints = sorted(random.sample(range(1, val), n - 1))
-	parts = [breakpoints[0]] + [breakpoints[i] - breakpoints[i - 1] for i in range(1, n - 1)] + [val - breakpoints[-1]]
+	split_points = sorted(random.randint(0, val) for _ in range(n - 1))
+	parts = [split_points[0]]
+	for i in range(1, len(split_points)):
+		parts.append(split_points[i] - split_points[i - 1])
+	parts.append(val - split_points[-1])
 	return parts
 
 n = 3
@@ -233,4 +269,4 @@ train_local_hospitals(local_hospitals, x_train, x_test, y_train, y_test, n)
 for i in local_hospitals:
 	i.generate_proof(main_port)
 
-time.sleep(100)
+time.sleep(10)

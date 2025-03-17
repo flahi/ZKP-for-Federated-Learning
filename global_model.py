@@ -120,7 +120,7 @@ class global_mod:
 		print(f"Confusion Matrix for hospital:\n{cm}")
 		feature_importances = self.get_feature_importances()
 		print(feature_importances)
-		percent = 0.33
+		percent = 0.35
 		self.ranges = [[int(np.maximum(0, i-(i*percent))), int(i+(i*percent))] for i in feature_importances]
 	def get_feature_importances(self):
 		feature_importances = self.model.feature_importances_.tolist()
@@ -218,4 +218,4 @@ x_train, x_test, y_train, y_test = test_train(x_array, y_array, n+1)
 print("Training global model...")
 global_model.train(x_train[n], x_test[n], y_train[n], y_test[n])
 
-time.sleep(1000)
+time.sleep(60)
