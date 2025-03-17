@@ -6,6 +6,7 @@ import pandas as pd
 import os
 import json
 import copy
+import random
 from ZKP import *
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import train_test_split
@@ -51,6 +52,8 @@ class local_mod:
 			self.range_from_global = data["ranges"]
 		elif (data["type"]==4):
 			print(data["validity"])
+		else:
+			print("Random access recieved.")
 	def train(self, x_train, x_test, y_train, y_test):
 		self.model.fit(x_train, y_train)
 		y_pred_proba = self.model.predict_proba(x_test)[:, 1]
@@ -88,7 +91,7 @@ class local_mod:
 				print("Commitments sent successfully.")
 			except ConnectionRefusedError:
 				print(f"Local model {self.id} could not connect to Node on port {port}")
-		time.sleep(3)
+		time.sleep(2)
 		print(f"\nRanges recieved from global hospitals.")
 		proofs = []
 		print(f"\nGenerating proofs for hospital {self.id}...")
@@ -111,7 +114,7 @@ class local_mod:
 				print("Proofs sent successfully.")
 			except ConnectionRefusedError:
 				print(f"Local model {self.id} could not connect to Node on port {port}")
-		time.sleep(3)
+		time.sleep(2)
 
 def load_data(path):
 	if not os.path.exists(path):
@@ -204,6 +207,13 @@ def categorize_smoking(smoking_status):
 	if smoking_status in ['ever', 'not current', 'former']:
 		return 'past-smoker'
 
+def split_value(val, n):
+	if n==1:
+		return [val]
+	breakpoints = sorted(random.sample(range(1, val), n - 1))
+	parts = [breakpoints[0]] + [breakpoints[i] - breakpoints[i - 1] for i in range(1, n - 1)] + [val - breakpoints[-1]]
+	return parts
+
 n = 3
 main_port = 6000
 local_hospitals = create_hospitals(n, main_port)
@@ -220,4 +230,7 @@ x_train, x_test, y_train, y_test = test_train(x_array, y_array, n)
 
 train_local_hospitals(local_hospitals, x_train, x_test, y_train, y_test, n)
 
-local_hospitals[0].generate_proof(main_port)
+for i in local_hospitals:
+	i.generate_proof(main_port)
+
+time.sleep(100)

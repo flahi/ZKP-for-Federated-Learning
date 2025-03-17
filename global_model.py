@@ -17,7 +17,7 @@ from sklearn.impute import SimpleImputer
 from sklearn.preprocessing import StandardScaler
 
 class global_mod:
-	def __init__(self, port):
+	def __init__(self, port, n):
 		self.port = port
 		self.local_ports = list()
 		self.model = RandomForestClassifier(
@@ -29,6 +29,8 @@ class global_mod:
 		)
 		self.local_commitments = dict()
 		self.valid_models = list()
+		self.no_of_local = n
+		self.no_of_local_recieved = 0
 		self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 		self.server_socket.bind(('localhost', self.port))
 		self.server_socket.listen()
@@ -51,41 +53,61 @@ class global_mod:
 		print(data)
 		if (data["type"]==1):
 			self.local_commitments[data["port"]] = data["commitments"]
-			limits = {"type":2, "ranges":self.ranges, "port":self.port}
-			limits_encoded = json.dumps(limits).encode()
-			with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-				try:
-					s.connect(('localhost', data["port"]))
-					s.sendall(limits_encoded)
-				except ConnectionRefusedError:
-					print(f"Global model could not connect to Node on port {data['port']}")
+			self.send_ranges(data["port"])
 		elif (data["type"]==3):
+			self.no_of_local_recieved += 1
 			proofs = data["proofs"]
-			check = True
-			for i in range(len(proofs)):
-				if (self.local_commitments[data["port"]][i]==proofs[i]["C"]):
-					print("\nProof: ", proofs[i])
-					if (validate_proof(proofs[i], self.ranges[i][0], self.ranges[i][1])):
-						print("Proof valid.")
-					else:
-						check = False
-						print("ZKP proof invalid.")
-				else:
-					check = False
-					print("proof invalid.")
-			print(f"\nModel validity: {check}")
-			validity = {"type": 4, "validity":check, "port":self.port}
-			validity_encoded = json.dumps(validity).encode()
-			if check:
-				self.valid_models.append(data["port"])
-			with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-				try:
-					s.connect(('localhost', data["port"]))
-					s.sendall(validity_encoded)
-				except ConnectionRefusedError:
-					print(f"Global model could not connect to Node on port {data['port']}")
+			self.check_validity(proofs, data["port"])
+			if self.no_of_local_recieved==self.no_of_local:
+				time.sleep(2)
+				self.send_valid_ports()
 		else:
 			print("Random access recieved...")
+	def send_ranges(self, local_port):
+		limits = {"type":2, "ranges":self.ranges, "port":self.port}
+		limits_encoded = json.dumps(limits).encode()
+		with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+			try:
+				s.connect(('localhost', local_port))
+				s.sendall(limits_encoded)
+			except ConnectionRefusedError:
+				print(f"Global model could not connect to Node on port {local_port}")
+	def check_validity(self, proofs, local_port):
+		check = True
+		for i in range(len(proofs)):
+			if (self.local_commitments[local_port][i]==proofs[i]["C"]):
+				print("\nProof: ", proofs[i])
+				if (validate_proof(proofs[i], self.ranges[i][0], self.ranges[i][1])):
+					print("Proof valid.")
+				else:
+					check = False
+					print("ZKP proof invalid.")
+			else:
+				check = False
+				print("proof invalid.")
+		print(f"\nModel validity: {check}")
+		validity = {"type": 4, "validity":check, "port":self.port}
+		validity_encoded = json.dumps(validity).encode()
+		if check:
+			self.valid_models.append(local_port)
+		with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+			try:
+				s.connect(('localhost', local_port))
+				s.sendall(validity_encoded)
+			except ConnectionRefusedError:
+				print(f"Global model could not connect to Node on port {local_port}")
+	def send_valid_ports(self):
+		valid_model_data = {"type":5, "port":self.port, "valid models":self.valid_models}
+		valid_model_data_encoded = json.dumps(valid_model_data).encode()
+		print(f"Valid model ports: {self.valid_models}")
+		for port in self.valid_models:
+			with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+				try:
+					s.connect(('localhost', port))
+					s.sendall(valid_model_data_encoded)
+				except ConnectionRefusedError:
+					print(f"Global model could not connect to Node on port {port}")
+		self.no_of_local_recieved = 0
 	def train(self, x_train, x_test, y_train, y_test):
 		self.model.fit(x_train, y_train)
 		y_pred_proba = self.model.predict_proba(x_test)[:, 1]
@@ -98,7 +120,7 @@ class global_mod:
 		print(f"Confusion Matrix for hospital:\n{cm}")
 		feature_importances = self.get_feature_importances()
 		print(feature_importances)
-		percent = 0.3
+		percent = 0.33
 		self.ranges = [[int(np.maximum(0, i-(i*percent))), int(i+(i*percent))] for i in feature_importances]
 	def get_feature_importances(self):
 		feature_importances = self.model.feature_importances_.tolist()
@@ -182,7 +204,7 @@ def categorize_smoking(smoking_status):
 
 n = 3
 main_port = 6000
-global_model = global_mod(main_port)
+global_model = global_mod(main_port, n)
 
 path = "Sample Data/diabetes_prediction_dataset.csv"
 X, Y = load_data(path)
