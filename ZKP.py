@@ -1,4 +1,4 @@
-from py_ecc.bn128 import G1, add, multiply, curve_order
+from py_ecc.bn128 import G1, add, multiply, curve_order, neg
 from py_ecc.bn128 import FQ as bn128_FQ
 from secrets import randbelow
 import hashlib
@@ -17,7 +17,7 @@ def create_proof(w, r, low, high, C, G, H):
 	w_low = w - low
 	C_w_low = pedersen_commit(w_low, r, G, H)
 	w_high = high - w
-	C_w_high = pedersen_commit(w_high, r, G, H)
+	C_w_high = pedersen_commit(w_high, curve_order-r, G, H)
 	
 	bit_commitments_w_low = []
 	r_bits_w_low = []
@@ -37,7 +37,7 @@ def create_proof(w, r, low, high, C, G, H):
 		bit_commitments_w_high.append(C_bit)
 		r_bits_w_high.append(r_bit)
 	
-	hash_input = f"{C}|{bit_commitments_w_low}|{bit_commitments_w_high}".encode()
+	hash_input = str(C) + str(low) + str(high) + str(bit_commitments_w_low) + str(bit_commitments_w_high)
 	c = generate_challenge(hash_input)
 	print(f"Challenge c = {c}")
 	
@@ -76,20 +76,22 @@ def validate_proof(proof, low, high):
 	zw_high = proof['zw_high']
 	zr_high = proof['zr_high']
 	
-	hash_input = f"{C}|{bit_commitments_w_low}|{bit_commitments_w_high}".encode()
+	bit_length = (high - low).bit_length()
+	
+	hash_input = str(C) + str(low) + str(high) + str(bit_commitments_w_low) + str(bit_commitments_w_high)
 	c = generate_challenge(hash_input)
 	print(f"Challenge c = {c}")
 	
 	if add(C_w_low, multiply(G, low)) == C:
 		print("\nCheck 1 passed: C = C_w_low + l.G")
 	else:
-		print("\nProof failed: Incorrect w' commitment!")
+		print("\nProof failed: Incorrect w_low commitment!")
 		return False
 		
-	if add(C_w_high, multiply(G, high)) == C:
-		print("\nCheck 2 passed: C = C_w_high + h.G")
+	if add(neg(C_w_high), multiply(G, high)) == C:
+		print("Check 2 passed: C = C_w_high + h.G")
 	else:
-		print("\nProof failed: Incorrect w'' commitment!")
+		print("Proof failed: Incorrect w_high commitment!")
 		return False
 	
 	#Check if hidden value is within given range
@@ -104,9 +106,9 @@ def validate_proof(proof, low, high):
 		rhs_high = add(rhs_high, multiply(bit_commitments_w_high[i], (2 ** i) % curve_order))
 	
 	if lhs_low == rhs_low and lhs_high == rhs_high:
-		print(f"\nProof successful: w lies in the range [{low}, {high}].")
+		print(f"Proof successful: w lies in the range [{low}, {high}].")
 	else:
-		print(f"\nProof failed: w does not lie in the range [{low}, {high}].")
+		print(f"Proof failed: w does not lie in the range [{low}, {high}].")
 		return False
 	
 	return True
@@ -151,7 +153,6 @@ def deserialize_ZKP_list(list_data):
 G = G1
 secret = "secret_string"
 H = multiply(G1, int(hashlib.sha256(secret.encode()).hexdigest(), 16) % curve_order)
-
 
 
 
