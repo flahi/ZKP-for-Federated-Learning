@@ -56,9 +56,9 @@ class local_mod:
 		if (data["type"]==2):
 			self.range_from_global = data["ranges"]
 		elif (data["type"]==4):
-			print(data["validity"])
+			print(f'\nModel {self.id} validity: {data["validity"]}\n\n')
 		elif (data["type"]==5):
-			print("Recieved valid ports.")
+			print(f"Local hospital {self.id} recieved valid ports.")
 			self.split_and_send_data(data)
 		elif (data["type"]==6):
 			self.update_partial_sum(data)
@@ -81,7 +81,7 @@ class local_mod:
 		print(classification_report(y_test, y_pred))
 		cm = confusion_matrix(y_test, y_pred)
 		print(f"Confusion Matrix for Hospital {self.id}:\n{cm}")
-		print(self.get_feature_importances())
+		print(f"\nFeature importances: {self.model.feature_importances_.tolist()}")
 	def get_feature_importances(self):
 		feature_importances = self.model.feature_importances_.tolist()
 		feature_importances = [int(i*(10**6)) for i in feature_importances]
@@ -98,7 +98,7 @@ class local_mod:
 		for i in range(len(feature_importances)):
 			commitment = pedersen_commit(feature_importances[i], r, G, H)
 			commitments.append(commitment)
-		print("Commitments\n", commitments)
+		#print("Commitments\n", commitments)
 		commitment_transaction = {"port":self.port, "type": 1, "commitments":commitments}
 		commitment_transaction_serialized = copy.deepcopy(commitment_transaction)
 		serialize_ZKP_json(commitment_transaction_serialized)
@@ -116,12 +116,14 @@ class local_mod:
 		proofs = []
 		print(f"\nGenerating proofs for hospital {self.id}...")
 		for i in range(len(feature_importances)):
-			print("\nRange: ",self.range_from_global[i])
+			print(f"\nProof for feature importance {i+1}")
+			print("Range: ",self.range_from_global[i])
 			print("FI: ", feature_importances[i])
 			proof = create_proof(feature_importances[i], r, self.range_from_global[i][0], self.range_from_global[i][1], commitments[i], G, H)
-			print(proof)
+			#print(proof)
+			print(f"Proof {i+1} generated.")
 			proofs.append(proof)
-		print("Proofs",proofs)
+		#print("Proofs",proofs)
 		proof_transaction = {"port":self.port, "type": 3, "proofs":proofs}
 		proof_transaction_serialized = copy.deepcopy(proof_transaction)
 		serialize_ZKP_json(proof_transaction_serialized)

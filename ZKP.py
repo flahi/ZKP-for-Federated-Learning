@@ -39,7 +39,7 @@ def create_proof(w, r, low, high, C, G, H):
 	
 	hash_input = str(C) + str(low) + str(high) + str(bit_commitments_w_low) + str(bit_commitments_w_high)
 	c = generate_challenge(hash_input)
-	print(f"Challenge c = {c}")
+	#print(f"Challenge c = {c}")
 	
 	zw_low = (w_low + c * w) % curve_order
 	zr_low = (sum(r_bits_w_low[i] * (2 ** i) for i in range(bit_length)) + c * r) % curve_order
@@ -47,8 +47,8 @@ def create_proof(w, r, low, high, C, G, H):
 	zw_high = (w_high + c * w) % curve_order
 	zr_high = (sum(r_bits_w_high[i] * (2 ** i) for i in range(bit_length)) + c * r) % curve_order
 	
-	print(f"\nResponses for w-low: zw_low = {zw_low}, zr_low = {zr_low}")
-	print(f"Responses for high-w: zw_high = {zw_high}, zr_high = {zr_high}")
+	#print(f"\nResponses for w-low: zw_low = {zw_low}, zr_low = {zr_low}")
+	#print(f"Responses for high-w: zw_high = {zw_high}, zr_high = {zr_high}")
 	
 	proof = {
 		'C': C,
@@ -61,7 +61,7 @@ def create_proof(w, r, low, high, C, G, H):
 		'zw_high': zw_high,
 		'zr_high': zr_high
 	}
-	print(f"Proof: {proof}")
+	#print(f"Proof: {proof}")
 	
 	return proof
 
@@ -80,7 +80,7 @@ def validate_proof(proof, low, high):
 	
 	hash_input = str(C) + str(low) + str(high) + str(bit_commitments_w_low) + str(bit_commitments_w_high)
 	c = generate_challenge(hash_input)
-	print(f"Challenge c = {c}")
+	#print(f"Challenge c = {c}")
 	
 	if add(C_w_low, multiply(G, low)) == C:
 		print("\nCheck 1 passed: C = C_w_low + l.G")

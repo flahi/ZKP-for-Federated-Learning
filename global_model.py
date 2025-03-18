@@ -54,7 +54,6 @@ class global_mod:
 		data = json.loads(data_from_client.decode())
 		deserialize_ZKP_json(data)
 		client_socket.close()
-		print(data)
 		if (data["type"]==1):
 			self.local_commitments[data["port"]] = data["commitments"]
 			self.send_ranges(data["port"])
@@ -70,7 +69,7 @@ class global_mod:
 			if self.no_of_local_recieved == len(self.valid_models):
 				if self.verify_total_data(data):
 					print(f"Feature summation is correctly sent.")
-					print("Aggregating...")
+					print("\nAggregating...")
 					time.sleep(0.5)
 					self.aggregate()
 				else:
@@ -88,19 +87,20 @@ class global_mod:
 			except ConnectionRefusedError:
 				print(f"Global model could not connect to Node on port {local_port}")
 	def check_validity(self, proofs, local_port):
+		print("\n\nChecking validity of proofs of local model {local_port - self.port}...")
 		check = True
 		for i in range(len(proofs)):
 			if (self.local_commitments[local_port][i]==proofs[i]["C"]):
-				print("\nProof: ", proofs[i])
+				#print("\nProof {i} for {local_port - self.port}: ", proofs[i])
 				if (validate_proof(proofs[i], self.ranges[i][0], self.ranges[i][1])):
-					print("Proof valid.")
+					print(f"Proof {i} for local model {local_port - self.port} is valid.")
 				else:
 					check = False
-					print("ZKP proof invalid.")
+					print(f"Proof {i} for local model {local_port - self.port} is invalid.")
 			else:
 				check = False
-				print("proof invalid.")
-		print(f"\nModel validity: {check}")
+				print(f"Proof {i} for local model {local_port - self.port} is invalid.")
+		print(f"\nModel {local_port - self.port} validity: {check}")
 		validity = {"type": 4, "validity":check, "port":self.port}
 		validity_encoded = json.dumps(validity).encode()
 		if check:
@@ -114,7 +114,7 @@ class global_mod:
 	def send_valid_ports(self):
 		valid_model_data = {"type":5, "port":self.port, "valid models":self.valid_models}
 		valid_model_data_encoded = json.dumps(valid_model_data).encode()
-		print(f"Valid model ports: {self.valid_models}")
+		print(f"\n\nValid model ports: {self.valid_models}\n")
 		for port in self.valid_models:
 			with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
 				try:
@@ -129,12 +129,12 @@ class global_mod:
 		for i in range(len(self.total_fi)):
 			self.total_fi[i] += data["partial fi"][i]
 	def verify_total_data(self, data):
+		print("\nChecking if recieved values are correct...")
 		print(f"Total r: {self.total_r}")
 		print(f"Total fi: {self.total_fi}")
 		valid_commitments = self.get_valid_commitments()
 		C_total_LHS = []
 		C_total_RHS = []
-		print("Checking if recieved values are correct...")
 		time.sleep(0.5)
 		for i in range(len(valid_commitments)):
 			C_total = add_commitments(valid_commitments[i])
@@ -158,9 +158,9 @@ class global_mod:
 		print(f"Confusion Matrix for hospital:\n{cm}")
 		feature_importances = self.get_feature_importances()
 		self.total_fi = [0]*len(feature_importances)
-		print(feature_importances)
 		percent = 0.33
 		self.ranges = [[int(np.maximum(0, i-(i*percent))), int(i+(i*percent))] for i in feature_importances]
+		print(f"\nFeature importances: {self.model.feature_importances_.tolist()}")
 	def get_feature_importances(self):
 		feature_importances = self.model.feature_importances_.tolist()
 		feature_importances = [int(i*(10**6)) for i in feature_importances]
@@ -176,6 +176,7 @@ class global_mod:
 	def aggregate(self):
 		aggregated_feature_importances = self.calculate_aggregated_fi()
 		print(f"Aggregated feature importances: {aggregated_feature_importances}")
+		print(f"\n\nRetraining global model...\n")
 		sample_weights = np.dot(x_train[n], aggregated_feature_importances)
 		sample_weights = (sample_weights - np.min(sample_weights)) / (np.max(sample_weights) - np.min(sample_weights))
 		self.train(x_train[n], x_test[n], y_train[n], y_test[n], sample_weights)
