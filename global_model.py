@@ -16,6 +16,8 @@ from sklearn.metrics import confusion_matrix
 from sklearn.impute import SimpleImputer
 from sklearn.preprocessing import StandardScaler
 
+np.set_printoptions(linewidth=np.inf)
+
 class global_mod:
 	def __init__(self, port, n):
 		self.port = port
@@ -66,40 +68,16 @@ class global_mod:
 		elif (data["type"]==7):
 			self.update_total_data(data)
 			if self.no_of_local_recieved == len(self.valid_models):
-				self.verify_total_data(data)
+				if self.verify_total_data(data):
+					print(f"Feature summation is correctly sent.")
+					print("Aggregating...")
+					time.sleep(0.5)
+					self.aggregate()
+				else:
+					print(f"Feature summation is incorrect.")
 				self.no_of_local = 0
 		else:
 			print("Random access recieved...")
-	def update_total_data(self, data):
-		self.no_of_local_recieved += 1
-		self.total_r += data["partial r"]
-		for i in range(len(self.total_fi)):
-			self.total_fi[i] += data["partial fi"][i]
-	def verify_total_data(self, data):
-		print(f"Total r: {self.total_r}")
-		print(f"Total fi: {self.total_fi}")
-		valid_commitments = self.get_valid_commitments()
-		C_total_LHS = []
-		C_total_RHS = []
-		check = True
-		print("Checking if recieved values are correct...")
-		time.sleep(0.5)
-		for i in range(len(valid_commitments)):
-			C_total = add_commitments(valid_commitments[i])
-			C_total_LHS.append(C_total)
-			C_calculated = pedersen_commit(self.total_fi[i], self.total_r, G, H)
-			C_total_RHS.append(C_calculated)
-			if (C_total!=C_calculated):
-				check = False
-				print(f"Feature {i+1} summation is incorrect.")
-			else:
-				print(f"Feature {i+1} summation is correctly sent.")
-		print(f"C LHS = {C_total_LHS}")
-		print(f"C RHS = {C_total_RHS}")
-		if check:
-			print(f"All features verified.")
-		else:
-			print(f"Tampered data!")
 	def send_ranges(self, local_port):
 		limits = {"type":2, "ranges":self.ranges, "port":self.port}
 		limits_encoded = json.dumps(limits).encode()
@@ -145,8 +123,31 @@ class global_mod:
 				except ConnectionRefusedError:
 					print(f"Global model could not connect to Node on port {port}")
 		self.no_of_local_recieved = 0
-	def train(self, x_train, x_test, y_train, y_test):
-		self.model.fit(x_train, y_train)
+	def update_total_data(self, data):
+		self.no_of_local_recieved += 1
+		self.total_r += data["partial r"]
+		for i in range(len(self.total_fi)):
+			self.total_fi[i] += data["partial fi"][i]
+	def verify_total_data(self, data):
+		print(f"Total r: {self.total_r}")
+		print(f"Total fi: {self.total_fi}")
+		valid_commitments = self.get_valid_commitments()
+		C_total_LHS = []
+		C_total_RHS = []
+		print("Checking if recieved values are correct...")
+		time.sleep(0.5)
+		for i in range(len(valid_commitments)):
+			C_total = add_commitments(valid_commitments[i])
+			C_total_LHS.append(C_total)
+			C_calculated = pedersen_commit(self.total_fi[i], self.total_r, G, H)
+			C_total_RHS.append(C_calculated)
+			if (C_total!=C_calculated):
+				return False
+		#print(f"C LHS = {C_total_LHS}")
+		#print(f"C RHS = {C_total_RHS}")
+		return True
+	def train(self, x_train, x_test, y_train, y_test, sw=None):
+		self.model.fit(x_train, y_train, sample_weight=sw)
 		y_pred_proba = self.model.predict_proba(x_test)[:, 1]
 		threshold = 0.75
 		y_pred = (y_pred_proba >= threshold).astype(int)
@@ -158,7 +159,7 @@ class global_mod:
 		feature_importances = self.get_feature_importances()
 		self.total_fi = [0]*len(feature_importances)
 		print(feature_importances)
-		percent = 0.35
+		percent = 0.33
 		self.ranges = [[int(np.maximum(0, i-(i*percent))), int(i+(i*percent))] for i in feature_importances]
 	def get_feature_importances(self):
 		feature_importances = self.model.feature_importances_.tolist()
@@ -172,6 +173,17 @@ class global_mod:
 				feature.append(self.local_commitments[self.valid_models[j]][i])
 			valid_commitments.append(feature)
 		return valid_commitments
+	def aggregate(self):
+		aggregated_feature_importances = self.calculate_aggregated_fi()
+		print(f"Aggregated feature importances: {aggregated_feature_importances}")
+		sample_weights = np.dot(x_train[n], aggregated_feature_importances)
+		sample_weights = (sample_weights - np.min(sample_weights)) / (np.max(sample_weights) - np.min(sample_weights))
+		self.train(x_train[n], x_test[n], y_train[n], y_test[n], sample_weights)
+	def calculate_aggregated_fi(self):
+		sum_array = [i/((10**6)*len(self.valid_models)) for i in self.total_fi]
+		aggregated = np.array(sum_array)
+		aggregated /= np.sum(aggregated)
+		return aggregated
 
 def load_data(path):
 	if not os.path.exists(path):
