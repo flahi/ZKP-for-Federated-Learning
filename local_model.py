@@ -27,7 +27,7 @@ class local_mod:
 		self.valid_models = list()
 		self.partial_r = 0
 		self.partial_fi = list()
-		self.partial_no = 1
+		self.partial_no = 0
 		self.model = RandomForestClassifier(
 			random_state = id,
 			n_estimators = 100,
@@ -141,19 +141,14 @@ class local_mod:
 		r_list = split_value(self.blinding_factor, n)
 		fi_list = [split_value(i, n) for i in self.get_feature_importances()]
 		for i in range(n):
-			if (data["valid models"][i]!=self.port):
-				MPC_data = {"type":6, "port": self.port, "r":r_list[i], "feature importance":[fi[i] for fi in fi_list]}
-				MPC_data_encoded = json.dumps(MPC_data).encode()
-				with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-					try:
-						s.connect(('localhost', data["valid models"][i]))
-						s.sendall(MPC_data_encoded)
-					except ConnectionRefusedError:
-						print(f"Local model {self.id} could not connect to Node on port {data['valid models'][i]}")
-			else:
-				self.partial_r += r_list[i]
-				for j in range(len(self.partial_fi)):
-					self.partial_fi[j] += fi_list[j][i]
+			MPC_data = {"type":6, "port": self.port, "r":r_list[i], "feature importance":[fi[i] for fi in fi_list]}
+			MPC_data_encoded = json.dumps(MPC_data).encode()
+			with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+				try:
+					s.connect(('localhost', data["valid models"][i]))
+					s.sendall(MPC_data_encoded)
+				except ConnectionRefusedError:
+					print(f"Local model {self.id} could not connect to Node on port {data['valid models'][i]}")
 	def update_partial_sum(self, data):
 		self.partial_no += 1
 		self.partial_r += data["r"]

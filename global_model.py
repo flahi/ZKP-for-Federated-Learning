@@ -71,6 +71,28 @@ class global_mod:
 			if self.no_of_local_recieved == len(self.valid_models):
 				print(f"Total r: {self.total_r}")
 				print(f"Total fi: {self.total_fi}")
+				valid_commitments = self.get_valid_commitments()
+				C_total_LHS = []
+				C_total_RHS = []
+				check = True
+				print("Checking if recieved values are correct...")
+				time.sleep(0.5)
+				for i in range(len(valid_commitments)):
+					C_total = add_commitments(valid_commitments[i])
+					C_total_LHS.append(C_total)
+					C_calculated = pedersen_commit(self.total_fi[i], self.total_r, G, H)
+					C_total_RHS.append(C_calculated)
+					if (C_total!=C_calculated):
+						check = False
+						print(f"Feature {i+1} summation is incorrect.")
+					else:
+						print(f"Feature {i+1} summation is correctly sent.")
+				print(f"C LHS = {C_total_LHS}")
+				print(f"C RHS = {C_total_RHS}")
+				if check:
+					print(f"All features verified.")
+				else:
+					print(f"Tampered data!")
 				self.no_of_local = 0
 		else:
 			print("Random access recieved...")
@@ -138,6 +160,14 @@ class global_mod:
 		feature_importances = self.model.feature_importances_.tolist()
 		feature_importances = [int(i*(10**6)) for i in feature_importances]
 		return feature_importances
+	def get_valid_commitments(self):
+		valid_commitments = []
+		for i in range(len(self.get_feature_importances())):
+			feature = []
+			for j in range(len(self.valid_models)):
+				feature.append(self.local_commitments[self.valid_models[j]][i])
+			valid_commitments.append(feature)
+		return valid_commitments
 
 def load_data(path):
 	if not os.path.exists(path):
@@ -214,6 +244,12 @@ def categorize_smoking(smoking_status):
 	if smoking_status in ['ever', 'not current', 'former']:
 		return 'past-smoker'
 
+def add_commitments(commitments):
+	val = commitments[0]
+	for i in range(1, len(commitments)):
+		val = add(val, commitments[i])
+	return val
+
 n = 3
 main_port = 6000
 global_model = global_mod(main_port, n)
@@ -229,5 +265,7 @@ x_train, x_test, y_train, y_test = test_train(x_array, y_array, n+1)
 
 print("Training global model...")
 global_model.train(x_train[n], x_test[n], y_train[n], y_test[n])
+print("Training complete.")
+print("\nWaiting for local models...")
 
 time.sleep(60)
