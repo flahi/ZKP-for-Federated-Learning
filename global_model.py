@@ -64,38 +64,42 @@ class global_mod:
 				time.sleep(2)
 				self.send_valid_ports()
 		elif (data["type"]==7):
-			self.no_of_local_recieved += 1
-			self.total_r += data["partial r"]
-			for i in range(len(self.total_fi)):
-				self.total_fi[i] += data["partial fi"][i]
+			self.update_total_data(data)
 			if self.no_of_local_recieved == len(self.valid_models):
-				print(f"Total r: {self.total_r}")
-				print(f"Total fi: {self.total_fi}")
-				valid_commitments = self.get_valid_commitments()
-				C_total_LHS = []
-				C_total_RHS = []
-				check = True
-				print("Checking if recieved values are correct...")
-				time.sleep(0.5)
-				for i in range(len(valid_commitments)):
-					C_total = add_commitments(valid_commitments[i])
-					C_total_LHS.append(C_total)
-					C_calculated = pedersen_commit(self.total_fi[i], self.total_r, G, H)
-					C_total_RHS.append(C_calculated)
-					if (C_total!=C_calculated):
-						check = False
-						print(f"Feature {i+1} summation is incorrect.")
-					else:
-						print(f"Feature {i+1} summation is correctly sent.")
-				print(f"C LHS = {C_total_LHS}")
-				print(f"C RHS = {C_total_RHS}")
-				if check:
-					print(f"All features verified.")
-				else:
-					print(f"Tampered data!")
+				self.verify_total_data(data)
 				self.no_of_local = 0
 		else:
 			print("Random access recieved...")
+	def update_total_data(self, data):
+		self.no_of_local_recieved += 1
+		self.total_r += data["partial r"]
+		for i in range(len(self.total_fi)):
+			self.total_fi[i] += data["partial fi"][i]
+	def verify_total_data(self, data):
+		print(f"Total r: {self.total_r}")
+		print(f"Total fi: {self.total_fi}")
+		valid_commitments = self.get_valid_commitments()
+		C_total_LHS = []
+		C_total_RHS = []
+		check = True
+		print("Checking if recieved values are correct...")
+		time.sleep(0.5)
+		for i in range(len(valid_commitments)):
+			C_total = add_commitments(valid_commitments[i])
+			C_total_LHS.append(C_total)
+			C_calculated = pedersen_commit(self.total_fi[i], self.total_r, G, H)
+			C_total_RHS.append(C_calculated)
+			if (C_total!=C_calculated):
+				check = False
+				print(f"Feature {i+1} summation is incorrect.")
+			else:
+				print(f"Feature {i+1} summation is correctly sent.")
+		print(f"C LHS = {C_total_LHS}")
+		print(f"C RHS = {C_total_RHS}")
+		if check:
+			print(f"All features verified.")
+		else:
+			print(f"Tampered data!")
 	def send_ranges(self, local_port):
 		limits = {"type":2, "ranges":self.ranges, "port":self.port}
 		limits_encoded = json.dumps(limits).encode()
