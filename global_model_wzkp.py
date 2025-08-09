@@ -36,19 +36,36 @@ class global_mod:
 		self.no_of_local_recieved = 0
 		self.total_r = 0
 		self.total_fi = list()
+		self.current_round = 0
 		self.validity_map = dict()
+		self.no_of_proofs_received = 0
 		self.ranges = []
 		self.feature_importances_map = dict()
 		self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 		self.server_socket.bind(('localhost', self.port))
 		self.server_socket.listen()
+		self.received_partial_sums=set()
+		self.global_x_train=None
+		self.global_x_test=None
+		self.global_y_train=None
+		self.global_y_test=None
 		threading.Thread(target=self.listen_for_data, daemon=True).start()
+
+	def set_global_data(self, x_train, x_test, y_train, y_test):
+		
+		self.global_x_train = x_train.copy()
+		self.global_x_test = x_test.copy()
+		self.global_y_train = y_train.copy()
+		self.global_y_test = y_test.copy()
+		print("Global training and test data stored for aggregation")
+
 	def listen_for_data(self):
 		print(f"Global hospital listening on port {self.port}")
 		while True:
 			client_socket, _ = self.server_socket.accept()
 			threading.Thread(target=self.handle_data, args=(client_socket, _), daemon=True).start()
 	def handle_data(self, client_socket, client_address):
+		
 		data_from_client = b""
 		while True:
 			chunk = client_socket.recv(4098)
@@ -58,39 +75,95 @@ class global_mod:
 		data = json.loads(data_from_client.decode())
 		deserialize_ZKP_json(data)
 		client_socket.close()
+		if data.get("port") == 6001:  # H1's port
+			
+			print(f"🔍 [H1-DEBUG] Type {data['type']} from H1 (6001) in round {self.current_round}")
+			print(f"🔍 [H1-DEBUG] Current commitments: {list(self.local_commitments.keys())}")
 		if (data["type"]==1):
+			print("Calling type 1")
+			port = data["port"]
+			commitments = data["commitments"]
+			commitments = data["commitments"]
 			self.local_commitments[data["port"]] = data["commitments"]
-			self.send_ranges(data["port"])
-		elif (data["type"]==3):
-                        self.no_of_local_recieved += 1
-                        proofs = data["proofs"]
-                        self.feature_importances_map[data["port"]] = data.get("feature_importances", [])  # ✅ ADD
-                        self.check_validity(proofs, data["port"])
-                        if self.no_of_local_recieved == self.no_of_local:
-                                time.sleep(2)
-                                self.send_valid_ports()
-					            self.update_total_data(data)
-								print(f"No of local recieved {self.no_of_local_recieved}")
-								if(self.no_of_local_recieved==len(self.valid_models)):
-							        print(f"Feature summation is correctly sent.")
-									print(f"Aggregating withing partitions....")
+			if port == 6001:
+				print(f"🔍 [H1-DEBUG] Stored H1 commitments. Total ports now: {list(self.local_commitments.keys())}")
+			
+			
+			print(f"✅ Global: Commitments stored: {len(commitments)} items")
+			print(f"🔍 DEBUG: Current commitments stored for ports: {list(self.local_commitments.keys())}")
 
-									time.sleep(0.5)
-									self.aggregate()
+			self.send_ranges(port)
+			
+		elif (data["type"]==3):
+						self.no_of_local_recieved += 1
+						print(f"✅ Global: Received proof from port {data['port']}, total proofs: {self.no_of_local_recieved}")
+						proofs = data["proofs"]
+						self.feature_importances_map[data["port"]] = data.get("feature_importances", [])  # ✅ ADD
+						self.check_validity(proofs, data["port"])
+						if self.no_of_local_recieved == self.no_of_local:
+								time.sleep(2)
+								self.send_valid_ports()
+								print("📤 Global: Sent valid ports to all valid models")
+								self.no_of_local_recieved = 0
+								self.no_of_proofs_received = 0
+								
+								
 
 		elif (data["type"]==7):
+			sender_port = data["port"]
+			round_num = data["round"]
+
+			# Create unique identifier for this submission
+			submission_id = f"{sender_port}_{round_num}"
+			
+			if submission_id in self.received_partial_sums:
+				print(f"[WARNING] Duplicate partial sum from port {sender_port} for round {round_num}, ignoring")
+				return
+
+			self.received_partial_sums.add(submission_id)
+
 			self.update_total_data(data)
+			
+			print(f"📊 Global: Received partial sum from port {data['port']}, total received: {self.no_of_local_recieved}/{len(self.valid_models)}")
+			
+			# Check if all valid models have sent their partial sums
 			if self.no_of_local_recieved == len(self.valid_models):
 				if self.verify_total_data(data):
-					print(f"Feature summation is correctly sent.")
-					print("\nAggregating...")
+					print(f"✅ Global: Feature summation is correctly verified for partition {data['round']}")
+					print(f"\n🔄 Global: Aggregating for partition {data['round']}...")
 					time.sleep(0.5)
+					
 					self.aggregate()
+					
+					# Reset for next partition
+					self.reset_for_next_partition()
+					self.current_round += 1
+					print(f"\n=== Global: Ready for next partition (Round {self.current_round}) ===\n")
+					
 				else:
-					print(f"Feature summation is incorrect.")
-				self.no_of_local = 0
+					print(f"❌ Global: Feature summation is incorrect for partition {data['round'] + 1}")
 		else:
-			print("Random access recieved...")
+			print("🔍 Global: Random access received...")
+			
+	def reset_for_next_partition(self):
+		"""Reset state variables for the next partition"""
+	
+		self.valid_models = list()
+		self.no_of_local_recieved = 0
+		self.no_of_proofs_received = 0
+		self.total_r = 0
+		self.total_fi = [0] * len(self.get_feature_importances()) if hasattr(self, 'model') and hasattr(self.model, 'feature_importances_') else []
+		self.validity_map = dict()
+		self.feature_importances_map = dict()
+		self.received_partial_sums=set()
+
+		self.current_round+=1
+		
+		if self.no_of_proofs_received >= self.no_of_local:
+			self.local_commitments = dict()
+		print(f"✅ Global: Ready for Round {self.current_round + 1}")
+		
+
 	def send_ranges(self, local_port):
 		limits = {"type":2, "ranges":self.ranges, "port":self.port}
 		limits_encoded = json.dumps(limits).encode()
@@ -140,7 +213,7 @@ class global_mod:
 				except ConnectionRefusedError:
 					print(f"Global model could not connect to Node on port {port}")
 		self.no_of_local_recieved = 0
-		self.plot_validity_and_features()
+		
 	def update_total_data(self, data):
 		self.no_of_local_recieved += 1
 		self.total_r += data["partial r"]
@@ -176,7 +249,7 @@ class global_mod:
 		print(f"Confusion Matrix for hospital:\n{cm}")
 		feature_importances = self.get_feature_importances()
 		self.total_fi = [0]*len(feature_importances)
-		percent = 0.33
+		percent = 0.5
 		self.ranges = [[int(np.maximum(0, i-(i*percent))), int(i+(i*percent))] for i in feature_importances]
 		print(f"\nFeature importances: {self.model.feature_importances_.tolist()}")
 	def get_feature_importances(self):
@@ -194,58 +267,21 @@ class global_mod:
 	def aggregate(self):
 		aggregated_feature_importances = self.calculate_aggregated_fi()
 		print(f"Aggregated feature importances: {aggregated_feature_importances}")
-		print(f"\n\nRetraining global model...\n")
-		sample_weights = np.dot(x_train[n], aggregated_feature_importances)
+		print(f"\n\nRetraining global model after partition {self.current_round + 1}...\n")
+		
+		# Use the global test data for retraining
+		scaled_importances=aggregated_feature_importances * 100
+		sample_weights = np.dot(self.global_x_train, scaled_importances)
 		sample_weights = (sample_weights - np.min(sample_weights)) / (np.max(sample_weights) - np.min(sample_weights))
-		self.train(x_train[n], x_test[n], y_train[n], y_test[n], sample_weights)
+		self.train(self.global_x_train, self.global_x_test, self.global_y_train, self.global_y_test, sample_weights)
+
 	def calculate_aggregated_fi(self):
 		sum_array = [i/((10**6)*len(self.valid_models)) for i in self.total_fi]
 		aggregated = np.array(sum_array)
 		aggregated /= np.sum(aggregated)
 		return aggregated
 	
-	def plot_validity_and_features(self):
-                print("\n\nPlotting model validity and feature importance graphs...")
-
-                ports = list(self.validity_map.keys())
-                model_ids = [f'Model {p - self.port}' for p in ports]
-                statuses = [1 if self.validity_map[p] else 0 for p in ports]
-                colors = ['green' if s else 'red' for s in statuses]
-
-                # Validity bar chart
-                fig, ax = plt.subplots(figsize=(8, 4))
-                ax.bar(model_ids, statuses, color=colors)
-                ax.set_yticks([0, 1])
-                ax.set_yticklabels(["Rejected", "Accepted"])
-                ax.set_ylabel("Model Validity")
-                ax.set_title("Local Model Validity Status")
-                plt.grid(True, axis='y')
-                plt.tight_layout()
-                plt.savefig("validity_plot.png")
-                print("Validity plot saved as 'validity_plot.png'")
-                os.startfile("validity_plot.png")
-
-
-                # Feature importances bar charts
-                for port in ports:
-                    fi = self.feature_importances_map.get(port, [])
-                    if not fi:
-                        continue
-                    fig, ax = plt.subplots(figsize=(10, 5))
-                    indices = list(range(len(fi)))
-                    color_per_fi = ['green' if self.ranges[i][0] <= fi[i] <= self.ranges[i][1] else 'red' for i in indices]
-                    ax.bar(indices, fi, color=color_per_fi, edgecolor='black')
-                    for i in indices:
-                        ax.plot([i, i], [self.ranges[i][0], self.ranges[i][1]], color='blue', linestyle='--', label='Valid Range' if i == 0 else "")
-                    ax.set_xticks(indices)
-                    ax.set_xticklabels([f'F{i}' for i in indices])
-                    ax.set_ylabel("Feature Importance (×10⁶)")
-                    ax.set_title(f"Model {port - self.port} Feature Importances vs Range")
-                    plt.legend()
-                    plt.grid(True)
-                    plt.tight_layout()
-                    plt.show()
-
+	
 
 def load_data(path):
 	if not os.path.exists(path):
@@ -340,6 +376,7 @@ X, Y = preprocess_data(X, Y)
 x_array, y_array = split_data(X, Y, n+1)
 
 x_train, x_test, y_train, y_test = test_train(x_array, y_array, n+1)
+global_model.set_global_data(x_train[n],x_test[n],y_train[n],y_test[n])
 
 print("Training global model...")
 global_model.train(x_train[n], x_test[n], y_train[n], y_test[n])

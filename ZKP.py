@@ -13,12 +13,23 @@ def generate_challenge(input_data):
 	return int(hashlib.sha256(hash_input).hexdigest(), 16) % curve_order
 
 def create_proof(w, r, low, high, C, G, H):
+	print(f"🔍 ZKP DEBUG - create_proof:")
+	print(f"  v (secret value w): {w}")
+	print(f"  low: {low}")
+	print(f"  high: {high}")
+	print(f" r : {r}")
+	print(f"  range: [{low}, {high}]")
+	print(f"  w in range?: {low <= w <= high}")
 	bit_length = (high - low).bit_length()
 	w_low = w - low
 	C_w_low = pedersen_commit(w_low, r, G, H)
 	w_high = high - w
 	C_w_high = pedersen_commit(w_high, curve_order-r, G, H)
-	
+	print(f"C_w_low {C_w_low}")
+
+	print(f"  w_low (w - low): {w_low}")
+	print(f"  w_high (high - w): {w_high}")
+	print(f"  bit_length: {bit_length}")
 	bit_commitments_w_low = []
 	r_bits_w_low = []
 	for i in range(bit_length):
@@ -80,12 +91,26 @@ def validate_proof(proof, low, high):
 	
 	hash_input = str(C) + str(low) + str(high) + str(bit_commitments_w_low) + str(bit_commitments_w_high)
 	c = generate_challenge(hash_input)
+	print(f"\n[VALIDATION] Challenge c: {c}")
+	print(f"low is: {low}")
+	print(f"high is :{high}")
+	print(f"G is :{G}")
+	print(f"C_w_low {C_w_low}")
 	#print(f"Challenge c = {c}")
 	
-	if add(C_w_low, multiply(G, low)) == C:
-		print("\nCheck 1 passed: C = C_w_low + l.G")
+	# if add(C_w_low, multiply(G, low)) == C:
+	# 	print("\nCheck 1 passed: C = C_w_low + l.G")
+	# else:
+	# 	print("\nProof failed: Incorrect w_low commitment!")
+	# 	return False
+
+	expected_C = add(C_w_low, multiply(G, low))
+	print(f"[CHECK 1] C: {C}")
+	print(f"[CHECK 1] Expected C from C_w_low + low*G: {expected_C}")
+	if expected_C == C:
+		print("✔ Check 1 passed: C = C_w_low + low·G")
 	else:
-		print("\nProof failed: Incorrect w_low commitment!")
+		print("❌ Proof failed: Incorrect w_low commitment!")
 		return False
 		
 	if add(neg(C_w_high), multiply(G, high)) == C:
@@ -99,11 +124,15 @@ def validate_proof(proof, low, high):
 	rhs_low = multiply(C, c)
 	for i in range(bit_length):
 		rhs_low = add(rhs_low, multiply(bit_commitments_w_low[i], (2 ** i) % curve_order))
+	print(f"[CHECK 3] lhs_low: {lhs_low}")
+	print(f"[CHECK 3] rhs_low: {rhs_low}")
 	
 	lhs_high = add(multiply(G, zw_high), multiply(H, zr_high))
 	rhs_high = multiply(C, c)
 	for i in range(bit_length):
 		rhs_high = add(rhs_high, multiply(bit_commitments_w_high[i], (2 ** i) % curve_order))
+	print(f"[CHECK 4] lhs_high: {lhs_high}")
+	print(f"[CHECK 4] rhs_high: {rhs_high}")
 	
 	if lhs_low == rhs_low and lhs_high == rhs_high:
 		print(f"Proof successful: w lies in the range [{low}, {high}].")
