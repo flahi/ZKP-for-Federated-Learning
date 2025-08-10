@@ -12,12 +12,12 @@ from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score
 from sklearn.metrics import classification_report
+from imblearn.pipeline import Pipeline
+from imblearn.under_sampling import RandomUnderSampler  
 from imblearn.over_sampling import SMOTE
 from sklearn.metrics import confusion_matrix
 from sklearn.impute import SimpleImputer
 from sklearn.preprocessing import StandardScaler
-from imblearn.pipeline import Pipeline
-from imblearn.under_sampling import RandomUnderSampler  
 from threading import Lock
 
 class local_mod:
@@ -33,7 +33,7 @@ class local_mod:
 		self.partial_fi = list()
 		self.partial_no = 0
 		self.last_accuracy = 0
-		self.commitments_log=[]
+		
 		self.proof_sent = {}
 		self.partial_sum_sent={}
 		self.range_from_global = []
@@ -66,167 +66,216 @@ class local_mod:
 
 		print(f"🔍 LOCAL Hospital {self.id} received message type {data['type']} from port {data.get('port', 'unknown')}")
 
-		if (data["type"]==2):
-			self.range_from_global = data["ranges"]
-			print(f"🔍 Hospital {self.id}: Received ranges")
-			print(f"Ranges from global are {self.range_from_global}")
-		elif (data["type"]==4):
+		
+		if (data["type"]==4):
 			print(f'\nModel {self.id} validity: {data["validity"]}\n\n')
 			print(f'🔍 Hospital {self.id}: Received validity: {data["validity"]}')
-		elif (data["type"]==5):
-			print(f"🔍 Hospital {self.id}: Received valid ports - STARTING MPC")
-			print(f"🔍 Hospital {self.id}: Valid models = {data['valid models']}")
-			self.partial_r=0
-			self.partial_fi =[0]*len(self.get_feature_importances())
-			self.partial_no=0
-			self.split_and_send_data(data)
-		elif (data["type"]==6):
-			print(f"🔥 Hospital {self.id} Recieved partial data from port {data['port']}")
-			if not hasattr(self, 'valid_models') or len(self.valid_models) == 0:
-				print(f"[WARNING] Hospital {self.id} received partial data but no valid models set")
-				return
-			self.update_partial_sum(data)
-			print(f"🔥 Hospital {self.id}: partial_no = {self.partial_no}/{len(self.valid_models)}")
+		# elif (data["type"]==5):
+		# 	print(f"🔍 Hospital {self.id}: Received valid ports - STARTING MPC")
+		# 	print(f"🔍 Hospital {self.id}: Valid models = {data['valid models']}")
+		# 	self.partial_r=0
+		# 	self.partial_fi =[0]*len(self.get_feature_importances())
+		# 	self.partial_no=0
+		# 	self.split_and_send_data(data)
+		# elif (data["type"]==6):
+		# 	print(f"🔥 Hospital {self.id} Recieved partial data from port {data['port']}")
+		# 	if not hasattr(self, 'valid_models') or len(self.valid_models) == 0:
+		# 		print(f"[WARNING] Hospital {self.id} received partial data but no valid models set")
+		# 		return
+		# 	self.update_partial_sum(data)
+		# 	print(f"🔥 Hospital {self.id}: partial_no = {self.partial_no}/{len(self.valid_models)}")
 			
-			if self.partial_no == len(self.valid_models):
-				# FIX: Check if we already sent partial sum for this round
-				if self.partial_sum_sent.get(self.current_round, False):
-					print(f"[WARNING] Hospital {self.id} already sent partial sum for round {self.current_round}")
-					return		
+		# 	if self.partial_no == len(self.valid_models):
+		# 		# FIX: Check if we already sent partial sum for this round
+		# 		if self.partial_sum_sent.get(self.current_round, False):
+		# 			print(f"[WARNING] Hospital {self.id} already sent partial sum for round {self.current_round}")
+		# 			return		
 
-				print(f"Partial r for local hospital {self.id}: {self.partial_r}")
-				print(f"Partial feature importances for local hospital {self.id}: {self.partial_fi}")
-				self.send_partial_sum(self.current_round)
-				self.partial_sum_sent[self.current_round] = True
+		# 		print(f"Partial r for local hospital {self.id}: {self.partial_r}")
+		# 		print(f"Partial feature importances for local hospital {self.id}: {self.partial_fi}")
+		# 		self.send_partial_sum(self.current_round)
+		# 		self.partial_sum_sent[self.current_round] = True
 				
-				# Reset after sending
-				self.partial_r = 0
-				self.partial_fi = [0]*len(self.get_feature_importances())
-				self.partial_no = 0
+		# 		# Reset after sending
+		# 		self.partial_r = 0
+		# 		self.partial_fi = [0]*len(self.get_feature_importances())
+		# 		self.partial_no = 0
+        
 				
 		else:
 			print("Random access recieved.")
+
+	def send_feature_importances(self, current_round):
+			feature_importances = self.get_feature_importances()
+
+			if current_round >= 4 and self.id in [1, 2]:
+				print(f"🚨 MALICIOUS: Hospital {self.id} is manipulating feature importances in round {current_round}")
+				feature_importances = self.apply_malicious_modifications(feature_importances, current_round)
+
+
+			data = {
+			"port": self.port,
+			"type": 10,  # Use a new type number (say 10) to represent feature importances sent without proofs
+			"feature_importances": feature_importances,
+			"round": current_round
+			}
+			data_encoded = json.dumps(data).encode()
+			print(f"Sending feature importances for round {current_round} from hospital {self.id}...")
+			with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+				try:
+					s.connect(('localhost', self.global_port))
+					s.sendall(data_encoded)
+					print(f"Feature importances sent successfully for round {current_round}.")
+				except ConnectionRefusedError:
+					print(f"Local model {self.id} could not connect to Node on port {self.global_port}")
+
+	def apply_malicious_modifications(self, feature_importances, current_round):
+		"""Apply malicious modifications to feature importances - Set certain columns to 0"""
+		original_fi = feature_importances.copy()
+		
+		
+		if self.id == 1:  # Hospital 1 malicious behavior
+			print(f"🚨 H1 MALICIOUS: Original FI = {original_fi}")
+			
+			# Set columns 0, 2, and 4 to zero
+			malicious_columns = [0,2,4,6,7]
+			for col in malicious_columns:
+				if col < len(feature_importances):
+					feature_importances[col] = 1005
+			
+			print(f"🚨 H1 MALICIOUS: Set columns {malicious_columns} to 1005")
+			
+			print(f"🚨 H1 MALICIOUS: Modified FI = {feature_importances}")
+			
+		elif self.id == 2:  # Hospital 2 malicious behavior
+			print(f"🚨 H2 MALICIOUS: Original FI = {original_fi}")
+			
+			# Set columns 1, 3, and 5 to zero
+			malicious_columns = [0,2,4,6,7]
+			for col in malicious_columns:
+				if col < len(feature_importances):
+					feature_importances[col] = 1005
+			
+			print(f"🚨 H2 MALICIOUS: Set columns {malicious_columns} to 0")
+			print(f"🚨 H2 MALICIOUS: Modified FI = {feature_importances}")
+			
+		return feature_importances
+
+
+
 	def train(self, x_train, x_test, y_train, y_test):
 	# Safety check: reshape if single sample passed
-                if x_test.ndim == 1:
-                        x_test = x_test.reshape(1, -1)
-                if x_train.ndim == 1:
-                        x_train = x_train.reshape(1, -1)
-                        y_train = np.array([y_train])  # Ensure 1D
+				if x_test.ndim == 1:
+					x_test = x_test.reshape(1, -1)
+				if x_train.ndim == 1:
+						x_train = x_train.reshape(1, -1)
+						y_train = np.array([y_train])  # Ensure 1D
 
-                self.model.fit(x_train, y_train)
-                y_pred_proba = self.model.predict_proba(x_test)[:, 1]
-                threshold = 0.5
-                y_pred = (y_pred_proba >= threshold).astype(int)
-                accuracy = accuracy_score(y_test, y_pred)
-                self.last_accuracy = accuracy
-                print(f"Accuracy for Hospital {self.id}: {accuracy:.2f}")
-                print(classification_report(y_test, y_pred))
-                cm = confusion_matrix(y_test, y_pred)
-                print(f"Confusion Matrix for Hospital {self.id}:\n{cm}")
-                print(f"\nFeature importances: {self.model.feature_importances_.tolist()}")
+				self.model.fit(x_train, y_train)
+				y_pred_proba = self.model.predict_proba(x_test)[:, 1]
+				threshold = 0.5
+				y_pred = (y_pred_proba >= threshold).astype(int)
+				accuracy = accuracy_score(y_test, y_pred)
+				self.last_accuracy = accuracy
+				print(f"Accuracy for Hospital {self.id}: {accuracy:.2f}")
+				print(classification_report(y_test, y_pred))
+				cm = confusion_matrix(y_test, y_pred)
+				print(f"Confusion Matrix for Hospital {self.id}:\n{cm}")
+				print(f"\nFeature importances: {self.model.feature_importances_.tolist()}")
                 
 	def get_feature_importances(self):
 		feature_importances = self.model.feature_importances_.tolist()
 		feature_importances = [int(i*(10**6)) for i in feature_importances]
 		return feature_importances
-	def generate_proof(self,current_round):  
-		if self.port == 6001:
-			print(f"🔍 [H1-LOCAL-DEBUG] Starting generate_proof for round {current_round}")
-			print(f"🔍 [H1-LOCAL-DEBUG] Current self.current_round: {getattr(self, 'current_round', 'NOT_SET')}")
-			print(f"🔍 [H1-LOCAL-DEBUG] Proof already sent for this round: {self.proof_sent.get(current_round, False)}")
+	# def generate_proof(self,current_round):  
+	# 	if self.port == 6001:
+	# 		print(f"🔍 [H1-LOCAL-DEBUG] Starting generate_proof for round {current_round}")
+	# 		print(f"🔍 [H1-LOCAL-DEBUG] Current self.current_round: {getattr(self, 'current_round', 'NOT_SET')}")
+	# 		print(f"🔍 [H1-LOCAL-DEBUG] Proof already sent for this round: {self.proof_sent.get(current_round, False)}")
     	
-		if self.proof_sent.get(current_round, False):
-			if self.port == 6001:
-				print(f"🔍 [Hospital {self.id}] Already sent proof for round {current_round}")
-				return  
+	# 	if self.proof_sent.get(current_round, False):
+	# 		if self.port == 6001:
+	# 			print(f"🔍 [Hospital {self.id}] Already sent proof for round {current_round}")
+	# 			return  
 		
 	
-		feature_importances=self.get_feature_importances()
-		r = randbelow(curve_order)
-		self.blinding_factor = r
-		commitments=[]
+	# 	feature_importances=self.get_feature_importances()
+	# 	# r = randbelow(curve_order)
+	# 	# self.blinding_factor = r
+	# 	# commitments=[]
 
-		print(f"\nGenerating commitments for hospital {self.id} (Round {current_round})...")
-		for i in range(len(feature_importances)):
-			commitment = pedersen_commit(feature_importances[i], r, G, H)
-			commitments.append(commitment)
-		while len(self.commitments_log) <= current_round:
-			self.commitments_log.append([])
-		self.commitments_log[current_round] = commitments
+	# 	# print(f"\nGenerating commitments for hospital {self.id} (Round {current_round})...")
+	# 	# for i in range(len(feature_importances)):
+	# 	# 	commitment = pedersen_commit(feature_importances[i], r, G, H)
+	# 	# 	commitments.append(commitment)
+	# 	# while len(self.commitments_log) <= current_round:
+	# 	# 	self.commitments_log.append([])
+	# 	# self.commitments_log[current_round] = commitments
 
-		print("Commitments\n", commitments)
-		self.proof_sent[current_round] = True
-		commitment_transaction = {"port":self.port, "type": 1, "commitments":commitments,"round":current_round}
-		commitment_transaction_serialized = copy.deepcopy(commitment_transaction)
-		serialize_ZKP_json(commitment_transaction_serialized)
-		commitment_transaction_data = json.dumps(commitment_transaction_serialized).encode()
-		print(f"Commitment transaction data {commitment_transaction_data}")
-		print(f"Sending commitments for Round {current_round}.....")
-		with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-			try:
-				s.connect(('localhost', self.global_port))
-				print("Calling sendall")
-				s.sendall(commitment_transaction_data)
-				print(f"Commitments sent successfully for Round {current_round}.")
-			except ConnectionRefusedError:
-				print(f"Local model {self.id} could not connect to Node on port {self.global_port}")
-		time.sleep(2)
-		print(f"\nRanges recieved from global hospitals.")
-		proofs = []
-		print(f"\nGenerating proofs for hospital {self.id} (Round {current_round})...")
-		for i in range(len(feature_importances)):
-			print(f"\nProof for feature importance {i+1}")
-			print("Range: ",self.range_from_global[i])
-			print("FI: ", feature_importances[i])
-			proof = create_proof(feature_importances[i], r, self.range_from_global[i][0], self.range_from_global[i][1], commitments[i], G, H)
-			#print(proof)
-			print(f"Proof {i+1} generated.")
-			proofs.append(proof)
-		#print("Proofs",proofs)
-		proof_transaction = {"port":self.port, "type": 3, "proofs":proofs}
-		proof_transaction_serialized = copy.deepcopy(proof_transaction)
-		serialize_ZKP_json(proof_transaction_serialized)
-		proof_transaction_data = json.dumps(proof_transaction_serialized).encode()
-		print("Sending proofs...")
-		with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-			try:
-				s.connect(('localhost', self.global_port))
-				s.sendall(proof_transaction_data)
-				print(f"Proofs sent successfully for Round {current_round}.")
-			except ConnectionRefusedError:
-				print(f"Local model {self.id} could not connect to Node on port {self.global_port}")
-		time.sleep(2)
-	def split_and_send_data(self, data):
-		with self.lock:
-		    self.valid_models = data["valid models"]
-		    n = len(data["valid models"])
-		    print(f"Length of valid models {n}")
+	# 	# print("Commitments\n", commitments)
+	# 	# self.proof_sent[current_round] = True
+	# 	# commitment_transaction = {"port":self.port, "type": 1, "commitments":commitments,"round":current_round}
+	# 	# commitment_transaction_serialized = copy.deepcopy(commitment_transaction)
+	# 	#serialize_ZKP_json(commitment_transaction_serialized)
+	# 	#commitment_transaction_data = json.dumps(commitment_transaction_serialized).encode()
+	# 	# print(f"Commitment transaction data {commitment_transaction_data}")
+	# 	# print(f"Sending commitments for Round {current_round}.....")
+		
+		
+	# 	proofs = []
+	# 	print(f"\nGenerating proofs for hospital {self.id} (Round {current_round})...")
+	# 	for i in range(len(feature_importances)):
+	# 		print(f"\nProof for feature importance {i+1}")
+			
+	# 		print("FI: ", feature_importances[i])
+	# 		proof = create_proof(feature_importances[i], r, self.range_from_global[i][0], self.range_from_global[i][1], commitments[i], G, H)
+	# 		#print(proof)
+	# 		print(f"Proof {i+1} generated.")
+	# 		proofs.append(proof)
+	# 	#print("Proofs",proofs)
+	# 	proof_transaction = {"port":self.port, "type": 3, "proofs":proofs}
+	# 	proof_transaction_serialized = copy.deepcopy(proof_transaction)
+	# 	serialize_ZKP_json(proof_transaction_serialized)
+	# 	proof_transaction_data = json.dumps(proof_transaction_serialized).encode()
+	# 	print("Sending proofs...")
+	# 	with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+	# 		try:
+	# 			s.connect(('localhost', self.global_port))
+	# 			s.sendall(proof_transaction_data)
+	# 			print(f"Proofs sent successfully for Round {current_round}.")
+	# 		except ConnectionRefusedError:
+	# 			print(f"Local model {self.id} could not connect to Node on port {self.global_port}")
+	# 	time.sleep(2)
+	# # def split_and_send_data(self, data):
+	# # 	with self.lock:
+	# # 	    self.valid_models = data["valid models"]
+	# # 	    n = len(data["valid models"])
+	# # 	    print(f"Length of valid models {n}")
 
-		    if n==0:
-		        print(f"[ERROR] No valid models for hospital {self.id}")
-		        return
-		    elif n==1:
-		        r_list = [self.blinding_factor]
-		        fi_list = [[fi] for fi in self.get_feature_importances()]
-		    else:
-		        r_list = split_value(self.blinding_factor, n)
-		        fi_list = [split_value(i, n) for i in self.get_feature_importances()]
-		    for i in range(n):
-			    MPC_data = {"type":6, "port": self.port, "r":r_list[i], "feature importance":[fi[i] for fi in fi_list]}
-			    MPC_data_encoded = json.dumps(MPC_data).encode()
-			    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-				    try:
-					    s.connect(('localhost', data["valid models"][i]))
-					    s.sendall(MPC_data_encoded)
-				    except ConnectionRefusedError:
-					    print(f"Local model {self.id} could not connect to Node on port {data['valid models'][i]}")
-		    print("\nSplitting and sending data...")
-		    print(f"Valid models: {self.valid_models}")
-		    print(f"Number of valid models: {n}")
-		    print(f"Blinding factor splits: {r_list}")
-		    print(f"Feature importance splits: {fi_list}")
-		    print("Data sent successfully.")
+	# # 	    if n==0:
+	# # 	        print(f"[ERROR] No valid models for hospital {self.id}")
+	# # 	        return
+	# # 	    elif n==1:
+	# # 	        r_list = [self.blinding_factor]
+	# # 	        fi_list = [[fi] for fi in self.get_feature_importances()]
+	# # 	    else:
+	# # 	        r_list = split_value(self.blinding_factor, n)
+	# # 	        fi_list = [split_value(i, n) for i in self.get_feature_importances()]
+	# # 	    for i in range(n):
+	# # 		    MPC_data = {"type":6, "port": self.port, "r":r_list[i], "feature importance":[fi[i] for fi in fi_list]}
+	# # 		    MPC_data_encoded = json.dumps(MPC_data).encode()
+	# # 		    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+	# # 			    try:
+	# # 				    s.connect(('localhost', data["valid models"][i]))
+	# # 				    s.sendall(MPC_data_encoded)
+	# # 			    except ConnectionRefusedError:
+	# # 				    print(f"Local model {self.id} could not connect to Node on port {data['valid models'][i]}")
+	# # 	    print("\nSplitting and sending data...")
+	# # 	    print(f"Valid models: {self.valid_models}")
+	# # 	    print(f"Number of valid models: {n}")
+	# # 	    print(f"Blinding factor splits: {r_list}")
+	# # 	    print(f"Feature importance splits: {fi_list}")
+	# # 	    print("Data sent successfully.")
 	def update_partial_sum(self, data):
 		self.partial_no += 1
 		self.partial_r += data["r"]
@@ -305,21 +354,16 @@ def test_train(x_array, y_array, n):
 	return x_train, x_test, y_train, y_test
 
 def scale_and_synthesize(x_train, x_test, y_train):
-	unique_before, counts_before = np.unique(y_train, return_counts=True)
-	print(f"Class distribution BEFORE SMOTE: {dict(zip(unique_before, counts_before))}")
 	columns_to_scale = [1, 5, 6, 7]
 	scaler = StandardScaler()
-	
 	x_train[:, columns_to_scale] = scaler.fit_transform(x_train[:, columns_to_scale])
 	x_test[:, columns_to_scale] = scaler.transform(x_test[:, columns_to_scale])
 	smote = Pipeline([
 	('smote', SMOTE(random_state=9)),
 	('undersample', RandomUnderSampler(random_state=9))
 ])
-	x_train_resampled, y_train_resampled = smote.fit_resample(x_train, y_train)
-	unique_after, counts_after = np.unique(y_train_resampled, return_counts=True)
-	print(f"Class distribution AFTER SMOTE: {dict(zip(unique_after, counts_after))}")
-	return x_train_resampled, x_test, y_train_resampled
+	x_train, y_train = smote.fit_resample(x_train, y_train)
+	return x_train, x_test, y_train
 
 def get_partial_data(X, Y, fraction=0.2):
     total = len(X)
@@ -421,8 +465,8 @@ for part_no in range(T):
 
 
         # Step 5b: Generate ZKP proof for that trained model
-        print(f"Generating proof for Hospital {i+1} on P{part_no + 1}.	..")
-        local_hospitals[i].generate_proof(part_no+1)
+        print(f"Generating feature importances for Hospital {i+1} on P{part_no + 1}.	..")
+        local_hospitals[i].send_feature_importances(part_no+1)
         time.sleep(3)
         
 

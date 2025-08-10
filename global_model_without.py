@@ -9,10 +9,10 @@ import copy
 from ZKP import *
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import train_test_split
-from sklearn.metrics import accuracy_score
-from sklearn.metrics import precision_score, recall_score, f1_score, accuracy_score,classification_report
 from imblearn.pipeline import Pipeline
 from imblearn.under_sampling import RandomUnderSampler  
+from sklearn.metrics import accuracy_score
+from sklearn.metrics import precision_score, recall_score, f1_score, accuracy_score,classification_report
 from imblearn.over_sampling import SMOTE
 from sklearn.metrics import confusion_matrix
 from sklearn.impute import SimpleImputer
@@ -58,12 +58,12 @@ class global_mod:
 		threading.Thread(target=self.listen_for_data, daemon=True).start()
 
 	def set_global_data(self, x_train, x_test, y_train, y_test):
-        
 		self.global_x_train = x_train.copy()
 		self.global_x_test = x_test.copy()
 		self.global_y_train = y_train.copy()
 		self.global_y_test = y_test.copy()
 		print("Global training and test data stored for aggregation")
+		
 	def listen_for_data(self):
 		print(f"Global hospital listening on port {self.port}")
 		while True:
@@ -85,94 +85,26 @@ class global_mod:
 			print(f"🔍 [H1-DEBUG] Type {data['type']} from H1 (6001) in round {self.current_round}")
 			print(f"🔍 [H1-DEBUG] Current commitments: {list(self.local_commitments.keys())}")
 		
-		if (data["type"]==1):  # Commitments
-			with self.commitments_lock:
-				print("Received Commitments from local\n")
-				port = data["port"]
-				commitments = data["commitments"]
-				round_num = data.get("round", self.current_round)
-				if round_num == self.current_round:
-					self.local_commitments[port] = commitments
-					self.send_ranges(port)  # Now safe to send ranges
-				
-				if port == 6001:
-					print(f"🔍 [H1-DEBUG] Stored H1 commitments. Total ports now: {list(self.local_commitments.keys())}")
-        
-				
-				
-                
-				# # Add round information to track commitments per round
-				# if not hasattr(self, 'commitments_by_round'):
-				# 	self.commitments_by_round = {}
+		# FIXED: Check for type 10 (what local hospitals are sending) and handle it properly
+		if data["type"] == 10:
+			port = data.get("port")
+			feature_importances = data.get("feature_importances", [])
+			current_round = data.get("round", self.current_round)
+			print(f"📥 Global: Received feature importances from port {port} for round {current_round}")
 
-				# current_round = self.current_round
-				# if current_round not in self.commitments_by_round:
-				# 	self.commitments_by_round[current_round] = {}
+			with self.commitments_lock:  # For thread safety
+				self.feature_importances_map[port] = feature_importances
 
-				# self.commitments_by_round[current_round][port] = commitments
-				# self.local_commitments[port] = commitments  # Keep for backward compatibility
-				
-
-				
-
-				# Send ranges immediately after receiving commitments
-				self.send_ranges(port)
-
-		elif (data["type"]==3):
-			
-
-			
-
-			self.no_of_proofs_received += 1
-			print(f"✅ Global: Received proof from port {data['port']}, total proofs: {self.no_of_proofs_received}")
-			proofs = data["proofs"]
-			self.feature_importances_map[data["port"]] = data.get("feature_importances", [])
-			self.check_validity(proofs, data["port"])
-			
-			# Check if all local models have submitted proofs for this round
-			if self.no_of_proofs_received == self.no_of_local:
-				print(f"🎉 Global: All {self.no_of_local} local models have submitted proofs for partition {self.current_round}")
-				self.send_valid_ports()
-				print("📤 Global: Sent valid ports to all valid models")
-				# Reset for next round
-				self.no_of_proofs_received = 0
-				self.no_of_local_recieved = 0
-
-		elif (data["type"]==7):
-			sender_port = data["port"]
-			round_num = data["round"]
-
-			# Create unique identifier for this submission
-			submission_id = f"{sender_port}_{round_num}"
-			
-			if submission_id in self.received_partial_sums:
-				print(f"[WARNING] Duplicate partial sum from port {sender_port} for round {round_num}, ignoring")
-				return
-
-			self.received_partial_sums.add(submission_id)
-
-			self.update_total_data(data)
-			
-			print(f"📊 Global: Received partial sum from port {data['port']}, total received: {self.no_of_local_recieved}/{len(self.valid_models)}")
-			
-			# Check if all valid models have sent their partial sums
-			if self.no_of_local_recieved == len(self.valid_models):
-				if self.verify_total_data(data):
-					print(f"✅ Global: Feature summation is correctly verified for partition {data['round']}")
-					print(f"\n🔄 Global: Aggregating for partition {data['round']}...")
-					time.sleep(0.5)
-					
+				# Check if all local nodes have sent their feature importances
+				if len(self.feature_importances_map) == self.no_of_local:
+					print("🎯 Global: All feature importances received, starting aggregation...")
 					self.aggregate()
-					
-					# Reset for next partition
-					self.reset_for_next_partition()
-					
-					print(f"\n=== Global: Ready for next partition (Round {self.current_round}) ===\n")
-					
-				else:
-					print(f"❌ Global: Feature summation is incorrect for partition {data['round'] + 1}")
+					self.feature_importances_map.clear()
+					self.current_round += 1  # Move to next round
+					print(f"✅ Global: Ready for round {self.current_round}")
+
 		else:
-			print("🔍 Global: Random access received...")
+			print(f"🔍 Global: Received message type {data['type']} - not handling")
 
 	def reset_for_next_partition(self):
 		"""Reset state variables for the next partition"""
@@ -188,73 +120,22 @@ class global_mod:
         
 			# Only reset commitments if we've received all proofs
 			if self.no_of_proofs_received >= self.no_of_local and self.no_of_local_recieved >=len(self.valid_models):
-				self.local_commitments = dict()
+				# self.local_commitments = dict()
 				self.no_of_proofs_received = 0  # Reset it here instead
             
 		self.current_round += 1  # Increment round counter
 		print(f"✅ Global: Reset complete for Round {self.current_round}")
-
-		
-		
 		print(f"✅ Global: Ready for next partition")
-
-	def send_ranges(self, local_port):
-		print(f"Ranges going to sent:{self.ranges}")
-		limits = {"type":2, "ranges":self.ranges, "port":self.port}
-		limits_encoded = json.dumps(limits).encode()
-		with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-			try:
-				s.connect(('localhost', local_port))
-				s.sendall(limits_encoded)
-			except ConnectionRefusedError:
-				print(f"Global model could not connect to Node on port {local_port}")
-
-	def check_validity(self, proofs, local_port):
-		
-		print(f"\n\nChecking validity of proofs of local model {local_port - self.port}...")
-		check = True
-
-		if local_port not in self.local_commitments:
-			print(f"[ERROR] No commitments found for the port {local_port}")
-			return 
-		if len(self.local_commitments[local_port]) < len(proofs):
-			print(f"[ERROR] Not enough commitments from port {local_port}")
-			return
-		for i in range(len(proofs)):
-			if (self.local_commitments[local_port][i]==proofs[i]["C"]):
-				if (validate_proof(proofs[i], self.ranges[i][0], self.ranges[i][1])):
-					print(f" ✔ Proof {i+1} for local model {local_port - self.port} is valid.")
-				else:
-					check = False
-					print(f" ❌ Proof {i+1} for local model {local_port - self.port} is invalid.")
-			else:
-				check = False
-				print(f"Proof {i} for local model {local_port - self.port} is invalid.")
-		print(f"\nModel {local_port - self.port} validity: {check}")
-		self.validity_map[local_port] = check
-		validity = {"type": 4, "validity":check, "port":self.port}
-		validity_encoded = json.dumps(validity).encode()
-		if check and local_port not in self.valid_models:
-			self.valid_models.append(local_port)
-		with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-			try:
-				s.connect(('localhost', local_port))
-				s.sendall(validity_encoded)
-			except ConnectionRefusedError:
-				print(f"Global model could not connect to Node on port {local_port}")
 
 	def send_valid_ports(self):
 		valid_model_data = {"type":5, "port":self.port, "valid models":self.valid_models}
 		valid_model_data_encoded = json.dumps(valid_model_data).encode()
 		print(f"\n\nValid model ports for partition {self.current_round }: {self.valid_models}\n")
 		if not self.valid_models:  # Explicit empty list check
-			print("[WARNING] No valid models available for MPC!")
+			print("[WARNING] No valid models available.")
 			self.train(self.global_x_train, self.global_x_test, self.global_y_train, self.global_y_test)
 			time.sleep(3)
 			return 
-			
-
-			return
 
 		for port in self.valid_models:
 			with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
@@ -263,35 +144,8 @@ class global_mod:
 					s.sendall(valid_model_data_encoded)
 				except ConnectionRefusedError:
 					print(f"Global model could not connect to Node on port {port}")
-		# Don't reset no_of_local_received here, let it be reset when we receive partial sums
 
-	def update_total_data(self, data):
-		self.no_of_local_recieved += 1
-		self.total_r += data["partial r"]
-		# Initialize total_fi if it's empty
-		if not self.total_fi:
-			self.total_fi = [0] * len(data["partial fi"])
-		for i in range(len(self.total_fi)):
-			self.total_fi[i] += data["partial fi"][i]
-
-	def verify_total_data(self, data):
-		print("\nChecking if received values are correct...")
-		print(f"Total r: {self.total_r}")
-		print(f"Total fi: {self.total_fi}")
-		valid_commitments = self.get_valid_commitments()
-		C_total_LHS = []
-		C_total_RHS = []
-		time.sleep(0.5)
-		for i in range(len(valid_commitments)):
-			C_total = add_commitments(valid_commitments[i])
-			C_total_LHS.append(C_total)
-			C_calculated = pedersen_commit(self.total_fi[i], self.total_r, G, H)
-			C_total_RHS.append(C_calculated)
-			if (C_total!=C_calculated):
-				return False
-		return True
-
-	def train(self, x_train, x_test, y_train, y_test, sw=None,check=False):
+	def train(self, x_train, x_test, y_train, y_test, sw=None, check=False):
 		self.model.fit(x_train, y_train, sample_weight=sw)
 		y_pred_proba = self.model.predict_proba(x_test)[:, 1]
 		threshold = 0.75
@@ -317,12 +171,7 @@ class global_mod:
 		print(f"F1-Score: {f1:.4f}")
 		feature_importances = self.get_feature_importances()
 		self.total_fi = [0]*len(feature_importances)
-		percent = 0.7
-		self.ranges = [[int(np.maximum(0, i-(i*percent))), int(i+(i*percent))] for i in feature_importances]
-		print(f"Ranges: {self.ranges}")
-		print(f"\nFeature importances: {self.model.feature_importances_.tolist()}")
-		
-		
+	
 	def get_feature_importances(self):
 		feature_importances = self.model.feature_importances_.tolist()
 		feature_importances = [int(i*(10**6)) for i in feature_importances]
@@ -340,23 +189,31 @@ class global_mod:
 	def aggregate(self):
 		aggregated_feature_importances = self.calculate_aggregated_fi()
 		print(f"Aggregated feature importances: {aggregated_feature_importances}")
-		print(f"\n\nRetraining global model after partition {self.current_round}...\n")
+		print(f"\n\nRetraining global model after round {self.current_round}...\n")
 		
 		# Use the global test data for retraining
-		scaled_importances=aggregated_feature_importances * 100
+		scaled_importances = aggregated_feature_importances * 100
 		sample_weights = np.dot(self.global_x_train, scaled_importances)
 		sample_weights = (sample_weights - np.min(sample_weights)) / (np.max(sample_weights) - np.min(sample_weights))
 		self.train(self.global_x_train, self.global_x_test, self.global_y_train, self.global_y_test, sample_weights)
-		
-		
-		
 
 	def calculate_aggregated_fi(self):
-		sum_array = [i/((10**6)*len(self.valid_models)) for i in self.total_fi]
-		aggregated = np.array(sum_array)
-		aggregated /= np.sum(aggregated)
+		# Calculate average of feature importances from all local models
+		all_feature_importances = list(self.feature_importances_map.values())
+		
+		# Convert to numpy array for easier computation
+		fi_array = np.array(all_feature_importances)
+		
+		# Calculate mean across all hospitals
+		mean_fi = np.mean(fi_array, axis=0)
+		
+		# Convert back to the same scale as used in training (divide by 10^6)
+		aggregated = mean_fi / (10**6)
+		
+		# Normalize to sum to 1
+		aggregated = aggregated / np.sum(aggregated)
+		
 		return aggregated
-
 
 def load_data(path):
 	if not os.path.exists(path):
